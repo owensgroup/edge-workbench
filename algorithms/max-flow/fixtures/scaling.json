@@ -1,0 +1,91 @@
+{
+ "trials": 9,
+ "degree": 3,
+ "note": "Random graphs, average of 9 trials per size. Both runs are asserted to reach the same maximum flow.",
+ "rows": [
+  {
+   "n": 6,
+   "edges": 14,
+   "seqRounds": 20,
+   "parRounds": 7,
+   "seqOps": 20,
+   "parOps": 19,
+   "peak": 3.7,
+   "ratio": 3.61,
+   "ratioLo": 1.85,
+   "ratioHi": 6.5
+  },
+  {
+   "n": 10,
+   "edges": 26,
+   "seqRounds": 78,
+   "parRounds": 21,
+   "seqOps": 78,
+   "parOps": 68,
+   "peak": 4.9,
+   "ratio": 4.86,
+   "ratioLo": 2.13,
+   "ratioHi": 10.0
+  },
+  {
+   "n": 20,
+   "edges": 57,
+   "seqRounds": 487,
+   "parRounds": 81,
+   "seqOps": 487,
+   "parOps": 480,
+   "peak": 7.1,
+   "ratio": 6.19,
+   "ratioLo": 3.79,
+   "ratioHi": 8.23
+  },
+  {
+   "n": 40,
+   "edges": 118,
+   "seqRounds": 1842,
+   "parRounds": 206,
+   "seqOps": 1842,
+   "parOps": 1829,
+   "peak": 11.3,
+   "ratio": 10.25,
+   "ratioLo": 4.24,
+   "ratioHi": 17.99
+  },
+  {
+   "n": 80,
+   "edges": 238,
+   "seqRounds": 6079,
+   "parRounds": 953,
+   "seqOps": 6079,
+   "parOps": 6099,
+   "peak": 14.9,
+   "ratio": 11.28,
+   "ratioLo": 1.88,
+   "ratioHi": 21.54
+  },
+  {
+   "n": 150,
+   "edges": 445,
+   "seqRounds": 25710,
+   "parRounds": 2419,
+   "seqOps": 25710,
+   "parOps": 25753,
+   "peak": 19.8,
+   "ratio": 13.3,
+   "ratioLo": 6.31,
+   "ratioHi": 25.55
+  },
+  {
+   "n": 300,
+   "edges": 898,
+   "seqRounds": 99538,
+   "parRounds": 4815,
+   "seqOps": 99538,
+   "parOps": 101107,
+   "peak": 31.3,
+   "ratio": 25.24,
+   "ratioLo": 9.9,
+   "ratioHi": 47.66
+  }
+ ]
+}

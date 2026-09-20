@@ -1,0 +1,16 @@
+{
+  "name": "edge-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Headless page checks and the EDGE Einsum interpreter",
+  "scripts": {
+    "build": "python3 edge_workbench/render/build_page.py",
+    "check": "node tests/check_page.js",
+    "check:verbose": "node tests/check_page.js -v",
+    "oracle": "node tests/verify_interp.js",
+    "test": "npm run build && npm run oracle && npm run check"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}

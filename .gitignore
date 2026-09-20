@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+*.egg-info/
+.DS_Store
+
+# Generated pages are build output. The fixtures they are checked against
+# are not -- those are committed.
+build/

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edge-workbench"
+version = "0.1.0"
+description = "Execute, verify and explore EDGE algorithm specifications"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Sanjana Mali" }]
+
+# Deliberately empty. The renderer writes a self-contained HTML file and the
+# interpreter is plain JS, so nothing here needs numpy to draw a page. Oracles
+# are the exception and are optional extras: an algorithm that wants scipy
+# says so, and the absence of scipy disables that oracle rather than the tool.
+dependencies = []
+
+[project.optional-dependencies]
+# Oracles. scipy.sparse.csgraph alone covers BFS, DFS, Dijkstra, Bellman-Ford,
+# Floyd-Warshall, max-flow and connected components -- most of the zoo.
+oracles = ["scipy>=1.11", "networkx>=3.0"]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["edge_workbench*"]

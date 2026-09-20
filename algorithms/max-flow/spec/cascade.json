@@ -1,0 +1,76 @@
+{
+ "_comment": [
+  "How the spec's Einsum labels map onto the IR, and the few structural",
+  "facts the IR does not carry.",
+  "",
+  "setup / body: which labels run once before the loop and which run once",
+  "  per generation. The IR lists the cascade's Einsums in order but does",
+  "  not say where the loop begins -- E01..E05 build the preflow and the",
+  "  residual graph from the input and never run again, while E06..E24 are",
+  "  the repeated step.",
+  "",
+  "  A LIST of indices means the label is one written Einsum that had to be",
+  "  lowered to several IR nodes. E04 is a three-arm `cases`; the arms run",
+  "  in order and each overwrites the last, which is what makes the u=s arm",
+  "  win. The reader wrote one Einsum, so the trace shows one step.",
+  "",
+  "stopAfter: where in the round the stopping condition is tested. The IR",
+  "  says WHAT to test; it does not say where the loop is cut. Testing",
+  "  after E06 rather than at the end of the round is the same algorithm --",
+  "  E06 computes Act from the current excess, and so does E19 -- but it",
+  "  changes the trace: a run that stops shows a short final generation",
+  "  (E06, then stop) instead of a full one.",
+  "",
+  "selectors: choice function name -> the rule this run uses. Required: an",
+  "  unmapped name stops the cascade rather than being guessed at.",
+  "  pick-admissible-edge is genuinely free here -- any admissible edge is a",
+  "  legal push, and the seed sweep checks the rule changes the work but",
+  "  never the answer. `lowest` records the arbitrary choice this run made;",
+  "  it is not part of the algorithm.",
+  "",
+  "displayNames: tensors the spec names one way and the write-up another. The interpreter aliases on read; the driver has to alias on write too, or Delta and delta become two tensors that never meet."
+ ],
+ "generationalRank": "I",
+ "maxGenerations": 600,
+ "initLabel": "init",
+ "stopLabel": "stop",
+ "stopAfter": "E06",
+ "displayNames": {
+  "Delta": "delta"
+ },
+ "setup": {
+  "E01": 0,
+  "E02": 1,
+  "E03": 2,
+  "E04": [
+   3,
+   4,
+   5
+  ],
+  "E05": 6
+ },
+ "body": {
+  "E06": 7,
+  "E07": 8,
+  "E08": 9,
+  "E09": 10,
+  "E10": 11,
+  "E11": 12,
+  "E12": 13,
+  "E13": 14,
+  "E14": 15,
+  "E15": 16,
+  "E16": 17,
+  "E17": 18,
+  "E18": 19,
+  "E19": 20,
+  "E20": 21,
+  "E21": 22,
+  "E22": 23,
+  "E23": 24,
+  "E24": 25
+ },
+ "selectors": {
+  "pick-admissible-edge": "lowest"
+ }
+}

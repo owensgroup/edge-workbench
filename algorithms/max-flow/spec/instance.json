@@ -1,0 +1,107 @@
+{
+ "_comment": [
+  "The problem instance: everything the spec needs that is not the spec.",
+  "",
+  "CLRS 3rd ed., Figure 26.1 -- the same graph the published maximum flow of",
+  "23 is stated for. Kept separate from the IR program because the program is",
+  "the algorithm and this is one input to it; a second instance is a second",
+  "file, not a second cascade.",
+  "",
+  "scalars fill in zero-rank tensors the IR declares but cannot value:",
+  "VertexCount is |V|, which is graph data a host supplies alongside C."
+ ],
+ "extent": {
+  "U": 6,
+  "V": 6
+ },
+ "scalars": {
+  "VertexCount": 6
+ },
+ "tensors": {
+  "C": {
+   "0,1": 16,
+   "0,2": 13,
+   "1,2": 10,
+   "2,1": 4,
+   "1,3": 12,
+   "3,2": 9,
+   "2,4": 14,
+   "4,3": 7,
+   "3,5": 20,
+   "4,5": 4
+  },
+  "S": {
+   "0": true
+  },
+  "T": {
+   "5": true
+  }
+ },
+ "domain": {
+  "view": "flow-graph",
+  "graph": {
+   "nodes": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "edges": [
+    {
+     "u": 0,
+     "v": 1,
+     "cap": 16
+    },
+    {
+     "u": 0,
+     "v": 2,
+     "cap": 13
+    },
+    {
+     "u": 1,
+     "v": 2,
+     "cap": 10
+    },
+    {
+     "u": 2,
+     "v": 1,
+     "cap": 4
+    },
+    {
+     "u": 1,
+     "v": 3,
+     "cap": 12
+    },
+    {
+     "u": 3,
+     "v": 2,
+     "cap": 9
+    },
+    {
+     "u": 2,
+     "v": 4,
+     "cap": 14
+    },
+    {
+     "u": 4,
+     "v": 3,
+     "cap": 7
+    },
+    {
+     "u": 3,
+     "v": 5,
+     "cap": 20
+    },
+    {
+     "u": 4,
+     "v": 5,
+     "cap": 4
+    }
+   ],
+   "source": 0,
+   "sink": 5
+  }
+ }
+}

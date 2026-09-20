@@ -303,14 +303,30 @@ const EdgeInterp = (function () {
    * @param index    position of the einsum in program.main_edge.cascade
    * @param state    flat tensor state BEFORE this einsum runs
    *                 ({tensorName: {"u,v": value}})
-   * @param opts     {N, recordedOutput}
-   *                 recordedOutput supplies the outcome of a populate
-   *                 selector, whose choice function the IR only names.
+   * @param opts     {N, recordedOutput, selector, label, generation}
+   *                 A populate's choice function is a bare name in the IR, so
+   *                 its outcome cannot be recomputed from the spec alone.
+   *                 Supply EITHER `selector` (a function that decides) or
+   *                 `recordedOutput` (the outcome a run already made). The
+   *                 viewer passes recordedOutput because it is showing a trace
+   *                 that already exists; the driver passes a selector because
+   *                 it is producing one.
    * @returns {output, outputRanks, points, result, reduced, note}
    */
   function evalEinsum(program, index, state, opts) {
+    return evalEinsumNode(
+      program, program.main_edge.cascade.einsums[index], state, opts);
+  }
+
+  /**
+   * As evalEinsum, but for an einsum node given directly.
+   *
+   * The cascade's initialization einsums live in `program.initialization`,
+   * not in the indexed body, so driving a whole program needs a way in that
+   * is not "position in the main cascade".
+   */
+  function evalEinsumNode(program, einsum, state, opts) {
     opts = opts || {};
-    const einsum = program.main_edge.cascade.einsums[index];
     const ctx = makeCtx(program, state, opts);
     const specs = {};
     einsum.specs.forEach((s) => (specs[s.label] = s));
@@ -377,14 +393,45 @@ const EdgeInterp = (function () {
     let note = null;
 
     if (populateSpec) {
-      // The selector's choice function is a bare name in the IR, so the
-      // outcome cannot be recomputed. Report the recorded one.
-      note =
-        "selector: the IR names the choice function (" +
-        (populateSpec.compute_op.name || populateSpec.compute_op.symbol) +
-        ") but carries no body, so the chosen coordinate is read from the " +
-        "trace rather than recomputed. Any admissible coordinate is valid.";
-      if (opts.recordedOutput) Object.assign(result, opts.recordedOutput);
+      const choiceName =
+        populateSpec.compute_op.name || populateSpec.compute_op.symbol;
+      // The populated ranks are the `*`-marked ones; the rest of the output
+      // coordinate identifies the group a choice is made within. For
+      // `PushCand_{i,u,v*}` that is: choose one v per u.
+      const popRanks = populateSpec.rank_list || [];
+      const groupRanks = outRanks.filter((r) => !popRanks.includes(r));
+      const candidates = points
+        .filter((p) => p.present)
+        .map((p) => ({
+          coord: p.coord,
+          value: p.value,
+          bind: p.bind,
+          groupCoord: groupRanks.map((n) => p.bind[n]).join(","),
+          populatedCoord: popRanks.map((n) => p.bind[n]),
+        }));
+
+      if (opts.selector) {
+        // Driving: the choice is made now, by a named rule.
+        Object.assign(result, opts.selector({
+          name: choiceName,
+          label: opts.label,
+          generation: opts.generation,
+          candidates, popRanks, groupRanks, outRanks,
+          state, N: ctx.N,
+        }));
+        Object.keys(result).forEach((c) => (assigned[c] = result[c]));
+        note =
+          "selector: the IR names the choice function (" + choiceName +
+          ") but carries no body, so the rule that decided it comes from the " +
+          "run's selector mapping, not from the spec.";
+      } else {
+        // Showing: the choice was already made, by whoever produced the trace.
+        note =
+          "selector: the IR names the choice function (" + choiceName +
+          ") but carries no body, so the chosen coordinate is read from the " +
+          "trace rather than recomputed. Any admissible coordinate is valid.";
+        if (opts.recordedOutput) Object.assign(result, opts.recordedOutput);
+      }
     } else if (reduceSpec) {
       const fnName = reduceSpec.compute_op.symbol || reduceSpec.compute_op.name;
       const fn = COMPUTE[fnName];
@@ -431,6 +478,7 @@ const EdgeInterp = (function () {
 
   return {
     evalEinsum,
+    evalEinsumNode,
     merges,
     glyph,
     MERGE_TT,

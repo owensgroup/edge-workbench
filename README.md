@@ -17,17 +17,23 @@ tutorial / IR spec  ─→  execute  ─→  verify  ─→  render
                           └─ one trace, generated from the spec
 ```
 
+## Quick start
+
+```
+git clone <this repo> && cd edge-workbench
+npm install                 # jsdom, for the headless page checks
+npm run build               # verify, then write build/max-flow/index.html
+npm test                    # everything
+```
+
+`node` and Python 3.10+ are the only requirements. No pip install, no sibling
+checkout — see *Provenance* below for why that is deliberate.
+
 ## Status
 
-**Early, but the load-bearing piece is in.** The tooling was lifted out of
-`GraphEinsums/notebooks/zoo/tutorials/maxflow/viz/` and the interpreter has
-been promoted to a cascade driver, so a trace is now produced *from a spec*
-rather than from a hand-written implementation of the algorithm.
-
-```
-npm test          # build, interpreter oracle, page checks, driver, self-test,
-                  # and agreement with the reference evaluator
-```
+**Early, but the load-bearing piece is in.** The page is built by executing
+the specification: the driver runs the IR over the instance and the trace it
+produces is what you see. Nothing is rendered from a recorded run.
 
 | | |
 |---|---|
@@ -37,6 +43,7 @@ npm test          # build, interpreter oracle, page checks, driver, self-test,
 | ✅ | **cascade driver** — runs a whole spec; reproduces the 236-step hand-written trace |
 | ✅ | selector registry (named choice functions with real semantics) |
 | ✅ | agreement with the upstream reference evaluator, state cell by cell |
+| ✅ | **the page is built from execution**, not from a recorded trace |
 | ⬜ | per-rank extents (today the viewer assumes one global `N`) |
 | ⬜ | oracle registry, worked-example checker |
 | ⬜ | tutorial `.md` → IR |
@@ -99,6 +106,22 @@ push-relabel, not a consequence of the spec, so it comes from display metadata
 and the domain view. A driven trace matches a recorded one on semantic content
 and nowhere else — which is exactly the content a second implementation could
 disagree about.
+
+## Provenance
+
+Everything on a page comes from running the spec. The recorded trace and the
+hand-written push-relabel in `algorithms/max-flow/{fixtures,reference}/` are
+the *second opinion*: the build compares its driven trace against them and
+refuses to write a page if they disagree. Three gates run before anything is
+written, and there is no flag to skip them.
+
+`edge-ir-interpreter` — which owns the IR and ships a reference evaluator — is
+a **private** repo, so nothing in the build path may touch it. A clean clone
+builds with `node` and nothing else. When that checkout *is* present, set
+`EDGE_IR_REPO` and `npm run agree` compares the two evaluators cell by cell;
+without it those tests skip rather than fail.
+
+`docs/PROVENANCE.md` has the full picture.
 
 ## Free choices
 

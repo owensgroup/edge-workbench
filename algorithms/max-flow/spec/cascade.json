@@ -25,8 +25,9 @@
   "  unmapped name stops the cascade rather than being guessed at.",
   "  pick-admissible-edge is genuinely free here -- any admissible edge is a",
   "  legal push, and the seed sweep checks the rule changes the work but",
-  "  never the answer. `lowest` records the arbitrary choice this run made;",
-  "  it is not part of the algorithm.",
+  "  never the answer. `select-min-coord` is the rule upstream's own",
+  "  max_flow_functions.py registers for it, so the two agree by",
+  "  construction rather than by coincidence.",
   "",
   "displayNames: tensors the spec names one way and the write-up another. The interpreter aliases on read; the driver has to alias on write too, or Delta and delta become two tensors that never meet."
  ],
@@ -71,6 +72,6 @@
   "E24": 25
  },
  "selectors": {
-  "pick-admissible-edge": "lowest"
+  "pick-admissible-edge": "select-min-coord"
  }
 }

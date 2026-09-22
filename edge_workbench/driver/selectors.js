@@ -20,8 +20,14 @@
  * mapping records which arbitrary rule this run used; where it is not, the
  * mapping is part of the algorithm and belongs under review.
  *
- *     const sel = makeSelector({ "pick-admissible-edge": "lowest" });
- *     const sel = replaySelector(goldenTrace, einsumLabelOf);
+ * The rule names are UPSTREAM'S. `edge_ir/udf/builtins.py` registers
+ * coordinate operators under `select-{min,max}-{val,coord}` (plus underscore
+ * and `{extreme}-{kind}-1` aliases), so a spec written against the reference
+ * evaluator's registry names resolves here without translation, and a name
+ * that means something there cannot quietly mean something else here.
+ *
+ *     const sel = makeSelector({ "pick-admissible-edge": "select-min-coord" });
+ *     const sel = replaySelector(goldenTrace);
  */
 
 // ---------------------------------------------------------------- rules ---
@@ -29,25 +35,31 @@
 // same coordinates on the ranks that are not being populated -- and returns
 // the one it chooses. `cands` is never empty.
 
-const RULES = {
-  /** Lowest populated coordinate. Deterministic, claims nothing else. */
-  lowest: (cands) => cands.reduce((a, b) => (cmpCoord(a, b) <= 0 ? a : b)),
+const BY_COORD = (extreme) => (cands) =>
+  cands.reduce((a, b) =>
+    (extreme === "min" ? cmpCoord(b, a) < 0 : cmpCoord(b, a) > 0) ? b : a
+  );
 
-  /** Highest populated coordinate. */
-  highest: (cands) => cands.reduce((a, b) => (cmpCoord(a, b) >= 0 ? a : b)),
+// Ranked by value, ties broken by the coordinate -- the same key upstream
+// uses, `(value, coord)`, so a tie cannot resolve differently in the two
+// implementations and turn into a spurious disagreement.
+const BY_VALUE = (extreme) => (cands) =>
+  cands.reduce((a, b) => {
+    const d = b.value === a.value ? cmpCoord(b, a)
+      : (b.value < a.value ? -1 : 1);
+    return (extreme === "min" ? d < 0 : d > 0) ? b : a;
+  });
 
-  /** Largest value; ties broken by lowest coordinate so it stays a function. */
-  "max-value": (cands) =>
-    cands.reduce((a, b) =>
-      b.value > a.value || (b.value === a.value && cmpCoord(b, a) < 0) ? b : a
-    ),
-
-  /** Smallest value; ties broken by lowest coordinate. */
-  "min-value": (cands) =>
-    cands.reduce((a, b) =>
-      b.value < a.value || (b.value === a.value && cmpCoord(b, a) < 0) ? b : a
-    ),
-};
+const RULES = {};
+["min", "max"].forEach((extreme) => {
+  ["val", "coord"].forEach((kind) => {
+    const op = kind === "val" ? BY_VALUE(extreme) : BY_COORD(extreme);
+    // Upstream registers each operator under three spellings; accept all of
+    // them so a spec does not have to know which one this tool prefers.
+    [`select-${extreme}-${kind}`, `select_${extreme}_${kind}`,
+     `${extreme}-${kind}-1`].forEach((n) => (RULES[n] = op));
+  });
+});
 
 /** Compare two candidates by their populated coordinates, numerically. */
 function cmpCoord(a, b) {
@@ -87,8 +99,8 @@ class UnknownSelector extends Error {}
 /**
  * Build a selector from a name -> rule mapping.
  *
- * @param mapping  {"pick-admissible-edge": "lowest", ...}. A rule may also be
- *                 {rule: "seeded", seed: 0}.
+ * @param mapping  {"pick-admissible-edge": "select-min-coord", ...}. A rule
+ *                 may also be {rule: "seeded", seed: 0}.
  */
 function makeSelector(mapping) {
   const fns = {};
@@ -114,7 +126,7 @@ function makeSelector(mapping) {
         `the spec uses a choice function "${req.name}" that this run has no ` +
           `rule for, so the cascade cannot be executed.\n` +
           `  Map it in the algorithm's selectors block, e.g.\n` +
-          `      "${req.name}": "lowest"\n` +
+          `      "${req.name}": "select-min-coord"\n` +
           `  Known rules: ${Object.keys(RULES).join(", ")}, seeded.\n` +
           `  Currently mapped: ${Object.keys(fns).join(", ") || "(none)"}\n` +
           `  Guessing is not an option here: for some algorithms the choice ` +

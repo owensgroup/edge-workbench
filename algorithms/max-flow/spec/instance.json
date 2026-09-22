@@ -8,7 +8,9 @@
   "file, not a second cascade.",
   "",
   "scalars fill in zero-rank tensors the IR declares but cannot value:",
-  "VertexCount is |V|, which is graph data a host supplies alongside C."
+  "VertexCount is |V|, which is graph data a host supplies alongside C.",
+  "",
+  "G is the adjacency the cascade never reads -- C carries the capacities. It is seeded anyway because the IR declares it as an input and the reference evaluator is given it, and an input present on one side only would show up as a disagreement about the algorithm when it is a disagreement about setup."
  ],
  "extent": {
   "U": 6,
@@ -18,6 +20,18 @@
   "VertexCount": 6
  },
  "tensors": {
+  "G": {
+   "0,1": 1,
+   "0,2": 1,
+   "1,2": 1,
+   "2,1": 1,
+   "1,3": 1,
+   "3,2": 1,
+   "2,4": 1,
+   "4,3": 1,
+   "3,5": 1,
+   "4,5": 1
+  },
   "C": {
    "0,1": 16,
    "0,2": 13,

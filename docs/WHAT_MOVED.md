@@ -65,6 +65,17 @@ files and `paths.algorithm(name)` for one algorithm's spec and fixtures — plus
 `EDGE_WORKBENCH_ALG` / `EDGE_WORKBENCH_ALG_DIR` so a tutorial can be checked
 from outside the repo without copying itself in first.
 
-That is the only change. `tests/test_move_is_faithful.py` proves it: the page
-generated here is byte-for-byte the page GraphEinsums generates. Delete that
-test once the driver lands and the two legitimately diverge.
+That was the only change, and `tests/test_move_is_faithful.py` proved it: the
+page generated here was byte-for-byte the page GraphEinsums generates.
+
+**That test has since been retired, on 2026-09-22, as it said it should be.**
+Upstream's IR gained `AdmPost` — E17 now writes a tensor of its own rather
+than a second generation of `Adm` — so this repo's reference implementation
+and its golden trace followed the spec, and GraphEinsums stayed pinned to the
+older one as research content. The pages are now different on purpose.
+
+`tests/test_build_gate.py` replaced it: the builder must refuse to write a
+page it has not verified, and the vendored IR must still match upstream's when
+upstream is present. What the move test really guarded is now guarded by
+things that keep working as the spec moves — the driver comparison, the
+interpreter oracle, and the page checks.

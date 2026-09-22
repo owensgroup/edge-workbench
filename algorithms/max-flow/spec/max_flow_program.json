@@ -6,12 +6,14 @@
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "V",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -27,12 +29,14 @@
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "V",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -48,17 +52,20 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "V",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -74,17 +81,20 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "V",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -100,12 +110,14 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -121,12 +133,14 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -142,12 +156,14 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -163,7 +179,8 @@
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -179,7 +196,8 @@
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -195,17 +213,20 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "V",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -221,7 +242,8 @@
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -237,17 +259,20 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "V",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -263,17 +288,20 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "V",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -289,17 +317,49 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "V",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
+        }
+      ],
+      "data_type": {
+        "kind": "builtin",
+        "name": "bool"
+      },
+      "empty_value": false,
+      "value": null
+    },
+    {
+      "name": "AdmPost",
+      "ranks": [
+        {
+          "name": "I",
+          "shape": null,
+          "coord_set": null,
+          "iterative": false
+        },
+        {
+          "name": "U",
+          "shape": "|V|",
+          "coord_set": null,
+          "iterative": false
+        },
+        {
+          "name": "V",
+          "shape": "|V|",
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -315,17 +375,20 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "V",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -341,17 +404,20 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "V",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -367,12 +433,14 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -388,12 +456,14 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -409,12 +479,14 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -430,12 +502,14 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -451,17 +525,20 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "V",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -477,12 +554,14 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -498,12 +577,14 @@
         {
           "name": "I",
           "shape": null,
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         },
         {
           "name": "U",
           "shape": "|V|",
-          "coord_set": null
+          "coord_set": null,
+          "iterative": false
         }
       ],
       "data_type": {
@@ -520,7 +601,7 @@
         "kind": "builtin",
         "name": "int"
       },
-      "empty_value": 0,
+      "empty_value": null,
       "value": 0
     },
     {
@@ -530,7 +611,7 @@
         "kind": "builtin",
         "name": "int"
       },
-      "empty_value": 1,
+      "empty_value": null,
       "value": 1
     },
     {
@@ -890,6 +971,19 @@
           },
           "specs": [
             {
+              "kind": "map",
+              "label": 1,
+              "rank_list": null,
+              "compute_op": {
+                "kind": "user_defined",
+                "name": "take_left"
+              },
+              "merge_op": {
+                "kind": "builtin",
+                "symbol": "take_left"
+              }
+            },
+            {
               "kind": "reduce",
               "label": 1,
               "rank_list": [
@@ -1091,7 +1185,8 @@
                     }
                   ]
                 }
-              }
+              },
+              "merge_op": null
             },
             "rhs": {
               "kind": "unary",
@@ -1110,7 +1205,8 @@
                     }
                   ]
                 }
-              }
+              },
+              "merge_op": null
             }
           },
           "specs": [
@@ -1533,6 +1629,19 @@
           },
           "specs": [
             {
+              "kind": "map",
+              "label": 1,
+              "rank_list": null,
+              "compute_op": {
+                "kind": "user_defined",
+                "name": "take_left"
+              },
+              "merge_op": {
+                "kind": "builtin",
+                "symbol": "take_left"
+              }
+            },
+            {
               "kind": "populate",
               "label": 1,
               "rank_list": [
@@ -1860,6 +1969,19 @@
           },
           "specs": [
             {
+              "kind": "map",
+              "label": 1,
+              "rank_list": null,
+              "compute_op": {
+                "kind": "user_defined",
+                "name": "take_left"
+              },
+              "merge_op": {
+                "kind": "builtin",
+                "symbol": "take_left"
+              }
+            },
+            {
               "kind": "reduce",
               "label": 1,
               "rank_list": [
@@ -1921,6 +2043,19 @@
             }
           },
           "specs": [
+            {
+              "kind": "map",
+              "label": 1,
+              "rank_list": null,
+              "compute_op": {
+                "kind": "user_defined",
+                "name": "take_left"
+              },
+              "merge_op": {
+                "kind": "builtin",
+                "symbol": "take_left"
+              }
+            },
             {
               "kind": "reduce",
               "label": 1,
@@ -2198,7 +2333,7 @@
           "predicates": []
         },
         {
-          "output_tensor": "Adm",
+          "output_tensor": "AdmPost",
           "output_ranks": [
             {
               "kind": "arith",
@@ -2316,7 +2451,7 @@
             "lhs": {
               "kind": "input",
               "proj": {
-                "tensor": "Adm",
+                "tensor": "AdmPost",
                 "ranks": [
                   {
                     "kind": "arith",
@@ -2350,6 +2485,19 @@
             }
           },
           "specs": [
+            {
+              "kind": "map",
+              "label": 1,
+              "rank_list": null,
+              "compute_op": {
+                "kind": "user_defined",
+                "name": "take_left"
+              },
+              "merge_op": {
+                "kind": "builtin",
+                "symbol": "take_left"
+              }
+            },
             {
               "kind": "reduce",
               "label": 1,
@@ -2566,7 +2714,8 @@
                     }
                   ]
                 }
-              }
+              },
+              "merge_op": null
             }
           },
           "specs": [
@@ -2770,6 +2919,19 @@
           },
           "specs": [
             {
+              "kind": "map",
+              "label": 1,
+              "rank_list": null,
+              "compute_op": {
+                "kind": "user_defined",
+                "name": "take_left"
+              },
+              "merge_op": {
+                "kind": "builtin",
+                "symbol": "take_left"
+              }
+            },
+            {
               "kind": "reduce",
               "label": 1,
               "rank_list": [
@@ -2958,7 +3120,8 @@
             }
           }
         }
-      ]
+      ],
+      "iterative_rank": null
     }
   }
 }

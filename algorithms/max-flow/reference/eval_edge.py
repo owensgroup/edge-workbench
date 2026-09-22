@@ -26,9 +26,13 @@ def rec(eid,expr,cap,out,hl=None):
 
 # ---- initializations ----
 C={k(u,v):c for (u,v),c in CAP.items()}
+# G is a declared input the cascade never reads -- C carries the capacities --
+# but it is part of the instance, and an input held on one side only shows up
+# as a disagreement about the algorithm when it is a disagreement about setup.
+G={k(u,v):1 for (u,v) in CAP}
 Sv={k(S):True}; Tv={k(T):True}
 D={k(u):(N if u==S else 0) for u in VS}          # D_{1,u}=0 ; D_{1,s}=|V|
-STATE.update(C=C,S=Sv,T=Tv,D=D,F={},E={},R={})
+STATE.update(G=G,C=C,S=Sv,T=Tv,D=D,F={},E={},R={})
 rec("init","F_{0,u,v}=0, E_{0,u}=0, D_{1,u}=0, D_{1,u:u=s}=|V|, S_{u:u=s}, T_{u:u=t}",
     "Initializations.","D")
 
@@ -140,11 +144,18 @@ while True:
     R=nz(uni(uni(R,delta,lambda a,b:a-b),rev,lambda a,b:a+b))
     STATE["R"]=R; rec("E16","R_{i+1,u,v} = (R ·¹ delta)_{i,u,v} ·² delta_{i,v,u} :: ⋀¹ -(∪) ⋀² +(∪)","Residual update.","R")
 
+    # Written to AdmPost, not Adm. The write-up calls this Adm_{i+1}, but so
+    # does E09 in the NEXT round -- two Einsums writing one generation of one
+    # tensor. Under a generation-indexed reading, where an assignment adds to
+    # a fiber rather than replacing it, E17's entries would survive into that
+    # round's push: inactive vertices, the source among them, and edges to
+    # vertices that have just relabelled. Giving it its own name is the fix
+    # upstream made, and AdmPost is read only by E18.
     Adm2={c:True for c in set(R)&set(Lbl)}
-    STATE["Adm"]=Adm2; rec("E17","Adm_{i+1,u,v} = R_{i+1,u,v} · Lbl_{i,u,v} :: ⋀ →(∩)","Still-admissible edges.","Adm")
+    STATE["AdmPost"]=Adm2; rec("E17","AdmPost_{i+1,u,v} = R_{i+1,u,v} · Lbl_{i,u,v} :: ⋀ →(∩)","Still-admissible edges.","AdmPost")
 
     HasAdm={k(u):True for u in VS if any(int(c.split(",")[0])==u for c in Adm2)}
-    STATE["HasAdm"]=HasAdm; rec("E18","HasAdm_{i+1,u} = Adm_{i+1,u,v} :: ⋁ OR(∪)","Vertices that still have somewhere to push.","HasAdm")
+    STATE["HasAdm"]=HasAdm; rec("E18","HasAdm_{i+1,u} = AdmPost_{i+1,u,v} :: ⋁ OR(∪)","Vertices that still have somewhere to push.","HasAdm")
 
     Act2={k(u):True for u in VS if u not in (S,T) and E.get(k(u),0)>0}
     STATE["Act"]=Act2; rec("E19","Act_{i+1,u} = NST_u ·¹ (E_{i+1,u} ·² 0)_{i+1,u} :: ⋀¹ ←(∩) ⋀² >(∩)",

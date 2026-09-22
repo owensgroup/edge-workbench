@@ -121,7 +121,7 @@ check("and it terminates in a comparable number of generations",
 // decoration. And if a rule changed the ANSWER, the choice would not be free
 // after all and the spec would be understating itself.
 const answers = new Set(), work = new Set(), shapes = new Set();
-["lowest", "highest"].forEach((rule) => {
+["select-min-coord", "select-max-coord"].forEach((rule) => {
   const r = runCascade(program, instance, cascade,
     { selector: makeSelector({ "pick-admissible-edge": rule }) });
   const F = r.steps[r.steps.length - 1].state.F || {};

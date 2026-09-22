@@ -12,6 +12,19 @@ push-relabel implementation to check against; no future algorithm will. What
 every algorithm WILL have is this evaluator, so the pairing that has to keep
 working is ours-against-upstream.
 
+THE FREE CHOICE IS PINNED, AND ONLY HERE
+----------------------------------------
+`pick-admissible-edge` is seeded-random in `cascade.json`, because the Einsum
+says ANY admissible edge and a deterministic rule would make the spec claim
+otherwise. But two implementations cannot be compared while both are free to
+choose differently -- every disagreement would be legitimate and the test
+would say nothing. So this file pins OUR side to `select-min-coord`, which is
+what upstream's `max_flow_functions.py` registers for the same operator, and
+the comparison then measures only what it is supposed to.
+
+That pinning is a test fixture. It is not what the algorithm does, and it is
+deliberately not in `cascade.json`.
+
 The two differ deliberately and the comparison has to allow for it:
 
   - it keeps every generation of every tensor; we keep the current one;
@@ -118,13 +131,19 @@ const R=process.env.EW_ROOT;
 const {runCascade}=require(R+"/edge_workbench/driver/cascade.js");
 const rd=(p)=>JSON.parse(fs.readFileSync(p,"utf8"));
 const S=R+"/algorithms/max-flow/spec";
+const cascade=rd(S+"/cascade.json");
+// Pin the free choice to the rule upstream registers, so the comparison is
+// about the evaluators and not about which admissible edge each one fancied.
+cascade.selectors={"pick-admissible-edge": process.env.EW_RULE};
 const r=runCascade(rd(S+"/max_flow_program.json"), rd(S+"/instance.json"),
-                   rd(S+"/cascade.json"), {});
+                   cascade, {});
 const last=r.steps[r.steps.length-1];
 process.stdout.write(JSON.stringify({generations:r.generations, state:last.state}));
 """
-    p = subprocess.run(["node", "-e", script], capture_output=True, text=True,
-                       cwd=ROOT, env=dict(os.environ, EW_ROOT=str(ROOT)))
+    p = subprocess.run(
+        ["node", "-e", script], capture_output=True, text=True, cwd=ROOT,
+        env=dict(os.environ, EW_ROOT=str(ROOT), EW_RULE=PINNED_RULE),
+    )
     assert p.returncode == 0, "our driver failed:\n" + p.stdout + p.stderr
     return json.loads(p.stdout)
 
@@ -141,6 +160,12 @@ def _at_generation(result, tensor: str, iterative: bool, generation: int) -> dic
     if not iterative:
         return cells
     return {c[1:]: v for c, v in cells.items() if c[0] == generation}
+
+
+#: What upstream's max_flow_functions.py aliases `select-one-admissible-v` to.
+#: Both sides make the same choices under it, so any remaining difference is
+#: real. See the header: this is a fixture, not the algorithm.
+PINNED_RULE = "select-min-coord"
 
 
 # The names this repo shows a tensor under, where they differ from the IR's.
@@ -281,6 +306,27 @@ def test_the_two_evaluators_agree_on_every_tensor():
     # ...and not everything, or the "scratch is excluded" reasoning above is
     # not actually being applied.
     assert "Lbl" not in compared and "Delta" not in compared, sorted(compared)
+
+
+def test_the_pinned_rule_is_the_one_upstream_registers():
+    """If upstream changes its rule, pinning to ours stops being a pin.
+
+    The comparison is only meaningful while both sides make the same choices.
+    That is a fact about upstream's registry, so read it rather than trusting
+    the comment above.
+    """
+    _require_upstream()
+    from max_flow_functions import SELECT_ONE_ADMISSIBLE_V, max_flow_registry
+    from edge_ir.udf import UdfCategory
+
+    reg = max_flow_registry()
+    theirs = reg.impl(UdfCategory.COORDINATE, SELECT_ONE_ADMISSIBLE_V)
+    canonical = reg.impl(UdfCategory.COORDINATE, PINNED_RULE)
+    assert theirs is canonical, (
+        f"upstream aliases {SELECT_ONE_ADMISSIBLE_V} to something other than "
+        f"{PINNED_RULE}; the comparison is no longer pinning both sides to "
+        f"the same choice."
+    )
 
 
 def test_both_reach_the_published_maximum_flow():

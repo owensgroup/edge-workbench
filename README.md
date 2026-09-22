@@ -100,6 +100,31 @@ and the domain view. A driven trace matches a recorded one on semantic content
 and nowhere else — which is exactly the content a second implementation could
 disagree about.
 
+## Free choices
+
+A populate names a choice function the IR does not define. Some of those
+choices are genuinely free and some are the algorithm, and the difference
+decides what a run should do with them.
+
+Max-flow's `pick-admissible-edge` is free: `1(pick-admissible-edge)` says ANY
+admissible edge. So the default is **seeded-random**, not a rule. A
+deterministic rule would make the spec claim something it does not, and would
+sample the legal executions with a bias — a bug that only appears on some
+choices would never appear at all.
+
+That freedom is measured rather than asserted: 27 different ways of choosing
+(25 seeds plus the two coordinate rules) all reach the published maximum flow
+of 23, all produce a feasible flow, and they take between 15 and 19 pushes to
+get there. Same seed, same run, so a build is reproducible.
+
+Algorithm X's `select-max-val` will not be free — it *is* the stack
+discipline — and will be mapped to the registry rule of that name.
+
+The one place a free choice gets pinned is a comparison between two
+implementations, where otherwise every disagreement is legitimate and the
+comparison says nothing. That pinning lives in the test doing the comparing,
+not in the algorithm's spec.
+
 ## Layout
 
 ```

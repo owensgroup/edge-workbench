@@ -23,11 +23,25 @@
   "",
   "selectors: choice function name -> the rule this run uses. Required: an",
   "  unmapped name stops the cascade rather than being guessed at.",
-  "  pick-admissible-edge is genuinely free here -- any admissible edge is a",
-  "  legal push, and the seed sweep checks the rule changes the work but",
-  "  never the answer. `select-min-coord` is the rule upstream's own",
-  "  max_flow_functions.py registers for it, so the two agree by",
-  "  construction rather than by coincidence.",
+  "",
+  "  pick-admissible-edge is genuinely free: the Einsum is written",
+  "  1(pick-admissible-edge), which says ANY admissible edge, and any one of",
+  "  them is a legal push. So the default is seeded-random, not a rule.",
+  "",
+  "  A deterministic rule would be wrong here in two ways. It would make the",
+  "  specification claim something it does not -- that the lowest-numbered",
+  "  neighbour is the one to push to -- and it would sample the space of legal",
+  "  executions with a bias, so a bug that only shows up on some choices could",
+  "  never appear. Random is what `any` means.",
+  "",
+  "  Seeded rather than unseeded so a build is reproducible: the same seed",
+  "  gives the same page. The seed sweep in tests/drive_and_compare.js is what",
+  "  turns `the choice is free` from an assertion into a measurement -- many",
+  "  seeds, same maximum flow, different work.",
+  "",
+  "  Where two implementations are COMPARED the choice has to be pinned, or a",
+  "  legitimate difference in an unspecified choice looks like disagreement.",
+  "  That pinning lives in the tests, not here.",
   "",
   "displayNames: tensors the spec names one way and the write-up another. The interpreter aliases on read; the driver has to alias on write too, or Delta and delta become two tensors that never meet."
  ],
@@ -72,6 +86,9 @@
   "E24": 25
  },
  "selectors": {
-  "pick-admissible-edge": "select-min-coord"
+  "pick-admissible-edge": {
+   "rule": "seeded",
+   "seed": 0
+  }
  }
 }

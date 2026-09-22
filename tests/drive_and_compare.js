@@ -14,12 +14,16 @@
  * from the spec, so the driver does not produce them and they are not
  * compared.
  *
- * Free choices are replayed. `pick-admissible-edge` is genuinely unspecified,
- * so a driven run is free to choose differently and still be correct -- which
- * would make a step-for-step diff meaningless. Replaying the recorded choices
- * removes that degree of freedom, leaving only differences that are real.
- * The second mode below then runs with an actual rule, to check the driver
- * works when it is deciding for itself.
+ * Free choices are replayed. `pick-admissible-edge` is genuinely unspecified
+ * -- the Einsum says ANY admissible edge, and cascade.json's default is
+ * seeded-random for that reason -- so a driven run is free to choose
+ * differently and still be correct, which would make a step-for-step diff
+ * meaningless. Replaying the recorded choices removes that degree of freedom,
+ * leaving only differences that are real.
+ *
+ * The later sections then let the driver choose for itself, and check the
+ * freedom rather than assuming it: 27 different ways of choosing, one answer,
+ * varying work.
  *
  *     node tests/drive_and_compare.js
  *     node tests/drive_and_compare.js -v
@@ -116,34 +120,78 @@ check("a run that makes its own choices still reaches the published answer",
 check("and it terminates in a comparable number of generations",
   ruled.generations > 0 && ruled.generations < 40, String(ruled.generations));
 
-// ================================================= 3. the rules matter ====
-// If every rule produced the same run, the selector machinery would be
-// decoration. And if a rule changed the ANSWER, the choice would not be free
-// after all and the spec would be understating itself.
-const answers = new Set(), work = new Set(), shapes = new Set();
-["select-min-coord", "select-max-coord"].forEach((rule) => {
-  const r = runCascade(program, instance, cascade,
-    { selector: makeSelector({ "pick-admissible-edge": rule }) });
+// ============================================ 3. the choice is free ====
+// `1(pick-admissible-edge)` says ANY admissible edge, and cascade.json's
+// default is seeded-random rather than a rule for exactly that reason. But
+// "the choice is free" should be a measurement, not a claim: run it many ways
+// and require the ANSWER to be invariant while the WORK varies.
+//
+// If the answer ever moved, the choice would not be free and the spec would
+// be understating itself. If the work never moved, the selector would not be
+// reaching the cascade at all and every check here would be vacuous.
+const CAP = Object.fromEntries(
+  Object.entries(instance.tensors.C).map(([k, v]) => [k, v]));
+
+/** Value of the flow, and whether it is a flow at all. */
+function appraise(r) {
   const F = r.steps[r.steps.length - 1].state.F || {};
-  let v = 0, pushes = 0;
-  Object.entries(F).forEach(([c, x]) => { if (Number(c.split(",")[0]) === 0) v += x; });
+  let value = 0;
+  const net = {};
+  const problems = [];
+  Object.entries(F).forEach(([c, f]) => {
+    const [u, v] = c.split(",").map(Number);
+    net[u] = (net[u] || 0) + f;
+    if (f > 0 && f > (CAP[c] || 0)) problems.push(`${c} carries ${f} > cap`);
+    const back = F[`${v},${u}`] || 0;
+    if (back !== -f) problems.push(`${c} not antisymmetric`);
+  });
+  Object.entries(net).forEach(([u, n]) => {
+    if (Number(u) !== 0 && Number(u) !== 5 && n !== 0)
+      problems.push(`vertex ${u} leaks ${n}`);
+  });
+  value = net[0] || 0;
+  let pushes = 0;
   r.steps.forEach((s) => {
     if (s.einsum === "E11") pushes += Object.keys(s.state.delta || {}).length;
   });
-  answers.add(v);
-  work.add(pushes);
-  shapes.add(JSON.stringify(Object.entries(F).sort()));
+  return { value, pushes, problems,
+           shape: JSON.stringify(Object.entries(F).sort()) };
+}
+
+const runs = [];
+for (let seed = 0; seed < 25; seed++) {
+  runs.push(appraise(runCascade(program, instance, cascade, {
+    selector: makeSelector({
+      "pick-admissible-edge": { rule: "seeded", seed } }),
+  })));
+}
+["select-min-coord", "select-max-coord"].forEach((rule) => {
+  runs.push(appraise(runCascade(program, instance, cascade,
+    { selector: makeSelector({ "pick-admissible-edge": rule }) })));
 });
-check("different rules never change the answer", answers.size === 1 && answers.has(23),
-  [...answers].join(","));
-// Work, not generations. On this graph both rules finish in 13 generations --
-// a parallel round advances every active vertex, so the round count is
-// insensitive to which edge each one picks -- but they push a different
-// number of times and arrive at a different (equally maximum) flow.
-check("but they do change the work, so the rule is really being used",
+
+const values = new Set(runs.map((r) => r.value));
+const work = new Set(runs.map((r) => r.pushes));
+const shapes = new Set(runs.map((r) => r.shape));
+const broken = runs.filter((r) => r.problems.length);
+
+check("27 ways of choosing, and every one reaches the published answer",
+  values.size === 1 && values.has(23), [...values].join(","));
+check("every one of them is a feasible flow, not just the right number",
+  broken.length === 0, broken.slice(0, 2).map((r) => r.problems[0]).join("; "));
+// Work, not generations. A parallel round advances every active vertex, so on
+// this graph the round count is insensitive to which edge each one picks --
+// but the number of pushes is not, and neither is where the flow ends up.
+check("but the work varies, so the choice is really reaching the cascade",
   work.size > 1, `pushes seen: ${[...work].sort((a, b) => a - b).join(", ")}`);
-check("and they reach a different, equally maximum, flow",
-  shapes.size > 1, "both rules produced the identical flow assignment");
+check("and different choices reach different, equally maximum, flows",
+  shapes.size > 1, "every choice produced the identical flow assignment");
+check("the same seed gives the same run, so a build is reproducible",
+  JSON.stringify(appraise(runCascade(program, instance, cascade, {
+    selector: makeSelector({ "pick-admissible-edge": { rule: "seeded", seed: 7 } }),
+  }))) === JSON.stringify(appraise(runCascade(program, instance, cascade, {
+    selector: makeSelector({ "pick-admissible-edge": { rule: "seeded", seed: 7 } }),
+  }))));
 
 // ================================================= 4. refuses to guess ====
 let refused = false, msg = "";

@@ -11,14 +11,26 @@
  * "Free" is not the same as "absent", though, and conflating the two is how a
  * viewer ends up animating a different algorithm than the one it is showing.
  * Max-flow's `pick-admissible-edge` really is free: any admissible edge works,
- * and the seed changes the work but never the answer. Algorithm X's
- * `select-max-val` is not free at all -- it IS the stack discipline, and
- * choosing differently turns depth-first backtracking into something else.
+ * and 27 different ways of choosing all reach the same maximum flow with 15
+ * to 19 pushes. Algorithm X's `select-max-val` is not free at all -- it IS
+ * the stack discipline, and choosing differently turns depth-first
+ * backtracking into something else.
  *
- * So: every name must be mapped to a rule before the cascade will run, and an
- * unmapped name is an error rather than a guess. Where the choice is free, the
- * mapping records which arbitrary rule this run used; where it is not, the
- * mapping is part of the algorithm and belongs under review.
+ * So: every name must be mapped before the cascade will run, and an unmapped
+ * name is an error rather than a guess. What it is mapped to differs by which
+ * kind it is:
+ *
+ *   FREE      -> `seeded`. Random is what "any" means. A deterministic rule
+ *                would make the spec claim something it does not, and would
+ *                sample the legal executions with a bias, so a bug that only
+ *                appears on some choices never would. Seeded rather than
+ *                unseeded so a build is reproducible.
+ *   NOT FREE  -> the named rule, which is part of the algorithm and belongs
+ *                under review like any other part of it.
+ *
+ * The exception is comparing two implementations, where a free choice has to
+ * be pinned or every disagreement is legitimate and the comparison says
+ * nothing. That pinning belongs in the test that does the comparing.
  *
  * The rule names are UPSTREAM'S. `edge_ir/udf/builtins.py` registers
  * coordinate operators under `select-{min,max}-{val,coord}` (plus underscore
@@ -26,7 +38,8 @@
  * evaluator's registry names resolves here without translation, and a name
  * that means something there cannot quietly mean something else here.
  *
- *     const sel = makeSelector({ "pick-admissible-edge": "select-min-coord" });
+ *     const sel = makeSelector({ "pick-admissible-edge": { rule: "seeded", seed: 0 } });
+ *     const sel = makeSelector({ "select-max-val": "select-max-val" });
  *     const sel = replaySelector(goldenTrace);
  */
 
@@ -99,8 +112,9 @@ class UnknownSelector extends Error {}
 /**
  * Build a selector from a name -> rule mapping.
  *
- * @param mapping  {"pick-admissible-edge": "select-min-coord", ...}. A rule
- *                 may also be {rule: "seeded", seed: 0}.
+ * @param mapping  name -> rule. A rule is either a registry name such as
+ *                 "select-min-coord", or {rule: "seeded", seed: 0} for a
+ *                 choice the spec leaves free.
  */
 function makeSelector(mapping) {
   const fns = {};
@@ -126,7 +140,8 @@ function makeSelector(mapping) {
         `the spec uses a choice function "${req.name}" that this run has no ` +
           `rule for, so the cascade cannot be executed.\n` +
           `  Map it in the algorithm's selectors block, e.g.\n` +
-          `      "${req.name}": "select-min-coord"\n` +
+          `      "${req.name}": {"rule": "seeded", "seed": 0}   (if free)\n` +
+          `      "${req.name}": "select-max-val"                 (if not)\n` +
           `  Known rules: ${Object.keys(RULES).join(", ")}, seeded.\n` +
           `  Currently mapped: ${Object.keys(fns).join(", ") || "(none)"}\n` +
           `  Guessing is not an option here: for some algorithms the choice ` +

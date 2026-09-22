@@ -11,7 +11,7 @@
     "test": "npm run build && npm run oracle && npm run check && npm run drive && npm run drive:self-test && npm run agree",
     "drive": "node tests/drive_and_compare.js",
     "drive:self-test": "node tests/drive_and_compare.js --self-test",
-    "agree": "pytest tests -q"
+    "agree": "python3 -m pytest tests -q"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"

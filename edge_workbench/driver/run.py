@@ -6,7 +6,7 @@ panel recomputes an Einsum live, so the evaluator has to exist as JS whatever
 else is true. Rather than write a second one in Python and have two to keep
 honest, the build shells out to the same one.
 
-    trace = run("max-flow")
+    trace = run()          # or run("some-algorithm")
 
 Requires `node` and nothing else. That matters: `edge-ir-interpreter` is a
 private repo, so nothing a stranger needs in order to `git clone && npm run
@@ -44,7 +44,7 @@ class DriverError(RuntimeError):
     pass
 
 
-def run(algorithm: str = "max-flow", *, program: str | None = None,
+def run(algorithm: str | None = None, *, program: str | None = None,
         selectors: dict | None = None) -> dict:
     """Execute the cascade and return {generations, steps}.
 
@@ -81,8 +81,8 @@ def _program_file(spec: Path) -> Path:
     """The IR program in an algorithm's spec directory.
 
     Found rather than named, so an algorithm does not have to call its program
-    `max_flow_program.json`; exactly one is required, because two would make
-    the choice silent.
+    a particular name; exactly one is required, because two would make the
+    choice silent.
     """
     candidates = sorted(
         p for p in spec.glob("*.json")

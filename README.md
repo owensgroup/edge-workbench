@@ -151,18 +151,24 @@ not in the algorithm's spec.
 ## Layout
 
 ```
-edge_workbench/
-  driver/      cascade.js, selectors.js   (runs a spec)
-  registry/    oracles, domain views      (next)
-  render/      page generation, edge_interp.js
-  verify/      checks and the discipline
+edge_workbench/          the tool. Contains no algorithm.
+  driver/      cascade.js, selectors.js, run.py
+  render/      build_page.py, annotate.py, edge_interp.js
+  verify/      VERIFICATION.md -- the discipline
+  paths.py     where things live
 algorithms/
-  max-flow/
+  max-flow/              one algorithm, entirely inside one directory
     spec/      IR program, instance, cascade structure, display metadata
-    fixtures/  the golden trace, and the traces it is compared against
-    reference/ the hand-written implementations, kept as a second opinion
-tests/         headless page checks, interpreter oracle
+    fixtures/  recorded traces: the second opinion, never an input
+    reference/ hand-written implementations, same role
+    verify/    its own answer check, run by the build if present
+    tests/     page checks, agreement with the reference evaluator
+tests/                   generic: driver comparison, interpreter oracle
 ```
+
+Adding an algorithm is adding a directory. The tool reads the spec for the
+Einsum mapping, the instance for the picture, `meta.py` for the prose — it
+does not know what any of them compute.
 
 ## Related repos
 

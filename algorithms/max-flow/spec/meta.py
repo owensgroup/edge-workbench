@@ -117,3 +117,20 @@ LATEX = {
 "E24": r"D_{i+1,u} = D_{i,u} \cdot \mathit{NewD}_{i,u} \;::\; \bigwedge \mathbin{<\!\!<}(\cup)",
 "stop": r"\diamond \,:\; \lVert \mathit{Act}_{i+1} \rVert \equiv 0",
 }
+
+# Tensors that carry a value from one generation to the next, as opposed to
+# scratch recomputed inside a round. The before/after toggle can step back
+# through these; for anything else "before" is the empty tensor.
+STATEFUL = {"E", "D", "Act", "F", "R"}
+
+# Which tensors get a permanent grid, and where. Intermediates are
+# deliberately absent: they exist for one Einsum, and the execution panel
+# shows each at the moment it is computed and again where it is read,
+# which beats a grid that is empty most of the time.
+GROUPS = {"static1": ["S", "T", "NST"], "static2": ["C"],
+          "state1": ["E", "D", "Act"], "state2": ["F", "R"]}
+
+# Page chrome: what this algorithm calls itself, and where the page links
+# back to on the site that hosts it.
+TITLE = "EDGE Max-Flow — tensor view"
+CRUMB = ('<a href="/algorithms/maximum-flow/">Maximum Flow (Push-Relabel)</a>')

@@ -68,8 +68,9 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
-SPEC = ROOT / "algorithms/max-flow/spec"
+ROOT = Path(__file__).resolve().parents[3]
+ALG = Path(__file__).resolve().parents[1].name
+SPEC = ROOT / "algorithms" / ALG / "spec"
 UPSTREAM = Path(os.environ.get(
     "EDGE_IR_REPO", str(Path.home() / "Projects/edge-ir-interpreter")))
 

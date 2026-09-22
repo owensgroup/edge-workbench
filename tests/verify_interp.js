@@ -13,40 +13,78 @@
 
 const fs = require("fs");
 const path = require("path");
+
+/** The algorithm to work on: named, or the only one there is. */
+function defaultAlg(root) {
+  const dir = path.join(root, "algorithms");
+  const names = fs.readdirSync(dir).filter(
+    (n) => !n.startsWith(".") && fs.statSync(path.join(dir, n)).isDirectory());
+  if (names.length === 1) return names[0];
+  throw new Error(
+    `${names.length} algorithms available (${names.join(", ")}); say which ` +
+    `with EDGE_WORKBENCH_ALG`);
+}
+
 const EdgeInterp = require("../edge_workbench/render/edge_interp.js");
 
-const ALG = process.env.EDGE_WORKBENCH_ALG || "max-flow";
+const ALG = process.env.EDGE_WORKBENCH_ALG || defaultAlg(path.join(__dirname, ".."));
 const HERE = path.join(__dirname, "..", "algorithms", ALG, "fixtures");
 const SPEC = path.join(__dirname, "..", "algorithms", ALG, "spec");
+
+/** The IR program in a spec directory: found, not named. */
+function programFile(dir) {
+  const own = new Set(["cascade.json", "instance.json"]);
+  const found = fs.readdirSync(dir)
+    .filter((f) => f.endsWith(".json") && !own.has(f));
+  if (found.length !== 1) {
+    throw new Error(`expected one IR program in ${dir}, found ${found}`);
+  }
+  return path.join(dir, found[0]);
+}
+
+// Tensors the write-up names differently from the IR. The interpreter takes
+// this from its caller rather than baking one algorithm's names in.
+const ALIAS = JSON.parse(
+  fs.readFileSync(path.join(SPEC, "cascade.json"), "utf8")
+).displayNames || {};
 const program = JSON.parse(
-  fs.readFileSync(path.join(SPEC, "max_flow_program.json"), "utf8")
+  fs.readFileSync(programFile(SPEC), "utf8")
 );
 const trace = JSON.parse(
   fs.readFileSync(path.join(HERE, "maxflow_edge_trace.json"), "utf8")
 );
 
 const VERBOSE = process.argv.includes("-v");
-const N = trace.graph.nodes.length;
+const CASCADE = JSON.parse(
+  fs.readFileSync(path.join(SPEC, "cascade.json"), "utf8")
+);
+const N = Math.max(...Object.values(
+  JSON.parse(fs.readFileSync(path.join(SPEC, "instance.json"), "utf8")).extent
+));
 
-// Spec einsum ID -> position in the IR cascade. E04's three-arm `cases` has
-// no IR node and is lowered to three sequential writes to R, which is why the
-// two numberings diverge after it. Mirrors EINSUM_INDEX in
-// edge-ir-interpreter/tests/test_max_flow_artifact.py.
-const EINSUM_INDEX = {
-  E01: 0, E02: 1, E03: 2,
-  E04: [3, 4, 5],
-  E05: 6, E06: 7, E07: 8, E08: 9, E09: 10, E10: 11, E11: 12, E12: 13,
-  E13: 14, E14: 15, E15: 16, E16: 17, E17: 18, E18: 19, E19: 20, E20: 21,
-  E21: 22, E22: 23, E23: 24, E24: 25,
-};
+// Spec einsum label -> position in the IR cascade, read from the algorithm's
+// cascade.json rather than repeated here. A label mapping to a LIST is one
+// written Einsum lowered to several IR nodes, which is why a written
+// numbering and the IR's diverge.
+const EINSUM_INDEX = { ...CASCADE.setup, ...CASCADE.body };
 
-// Steps the interpreter is not expected to reproduce, with the reason.
+// Steps the interpreter is not expected to reproduce, and why. The first two
+// are structural; the rest are DERIVED from the program -- an Einsum whose
+// outcome depends on a choice function cannot be recomputed from the spec,
+// because the spec names the function and does not define it.
 const SKIP = {
-  init: "initialization block, not a cascade einsum",
-  stop: "stopping condition, computes no tensor",
-  E10: "nondeterministic selector; the IR names the choice function but " +
-       "carries no body, so the outcome is displayed, not recomputed",
+  [CASCADE.initLabel || "init"]: "initialization block, not a cascade einsum",
+  [CASCADE.stopLabel || "stop"]: "stopping condition, computes no tensor",
 };
+Object.entries(EINSUM_INDEX).forEach(([label, idx]) => {
+  const nodes = (Array.isArray(idx) ? idx : [idx])
+    .map((i) => program.main_edge.cascade.einsums[i]);
+  if (nodes.some((e) => (e.specs || []).some((sp) => sp.kind === "populate"))) {
+    SKIP[label] =
+      "nondeterministic selector; the IR names the choice function but " +
+      "carries no body, so the outcome is displayed, not recomputed";
+  }
+});
 
 function canon(t) {
   // Compare on presence + value, ignoring key order.
@@ -98,7 +136,7 @@ for (let s = 1; s < trace.steps.length; s++) {
     for (const i of idx) {
       const st = Object.assign({}, before);
       st[outName] = acc;
-      const r = EdgeInterp.evalEinsum(program, i, st, { N });
+      const r = EdgeInterp.evalEinsum(program, i, st, { N, tensorAlias: ALIAS });
       // Apply what the arm WROTE, not just what it left present: writing the
       // empty value clears the cell. The source-row arm writes 0 to R[s,*],
       // and 0 is R's empty value -- if that did not clear, the default arm's
@@ -110,7 +148,7 @@ for (let s = 1; s < trace.steps.length; s++) {
     }
     got = acc;
   } else {
-    const r = EdgeInterp.evalEinsum(program, idx, before, { N });
+    const r = EdgeInterp.evalEinsum(program, idx, before, { N, tensorAlias: ALIAS });
     got = r.result;
   }
 

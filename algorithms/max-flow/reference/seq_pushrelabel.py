@@ -159,11 +159,11 @@ def run():
         "variant": "sequential",
         "label": "Sequential — the pseudocode",
         "sublabel": "one push or relabel per step",
-        "domainView": "flow-graph",
+        "domainView": "graph",
         "rounds": len(steps) - 2,          # exclude init and done
         "operations": ops["push"] + ops["relabel"],
         "opCounts": ops,
-        "maxFlow": maxflow,
+        "maxFlow": maxflow, "headline": {"label": "max flow", "value": maxflow},
         "graph": {
             "nodes": list(range(N)),
             "source": S,

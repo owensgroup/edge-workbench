@@ -18,13 +18,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
 from edge_workbench import paths                       # noqa: E402
 
-ALG = os.environ.get("EDGE_WORKBENCH_ALG", "max-flow")
+ALG = os.environ.get("EDGE_WORKBENCH_ALG") or paths.default()
 HERE = str(paths.RENDER)                 # tool files: edge_interp.js
 SPEC = str(paths.spec(ALG))              # IR program, display metadata
 FIX = str(paths.fixtures(ALG))           # traces, scaling data
 OUT = os.environ.get("EDGE_WORKBENCH_OUT", os.path.join(str(paths.ROOT), "build", ALG))
 VERIFY = str(paths.TOOL / "verify")
 TESTS = str(paths.TESTS)
+ALGTESTS = str(paths.algorithm(ALG) / "tests")
 os.makedirs(OUT, exist_ok=True)
 
 sys.path.insert(0, SPEC)
@@ -61,26 +62,36 @@ def verify_interpreter():
                  "index.html was NOT written.")
 
 def verify_algorithm():
-    """Check the cascade computes a correct maximum flow before building.
+    """Run the algorithm's own verifier, if it has one.
 
-    The interpreter check above proves the JS and Python evaluators agree;
-    this proves what they agree ON is right -- the flow is feasible, and its
-    value matches an independent algorithm over random graphs. Two different
-    questions, and a viz that steps convincingly through a wrong answer is
-    worse than one that refuses to build.
+    The interpreter and driver checks prove the evaluators agree with each
+    other. This is the different question: is what they agree ON right? Only
+    the algorithm can answer that -- it needs an independent implementation
+    of the same problem -- so the verifier lives with the algorithm, in
+    `algorithms/<alg>/verify/`, and the tool only knows how to run it.
 
-    Trials are kept low here; run verify_algorithm.py directly for a proper
-    sweep, and with --self-test to confirm it can still fail.
+    Optional, because an algorithm nobody has written a verifier for should
+    still render. The skip is loud: a page whose answer nothing checked is
+    worth less than one whose answer something did, and the reader of the
+    build log should be able to tell which they have.
+
+    Trials are kept low here; run the verifier directly for a proper sweep,
+    and with --self-test to confirm it can still fail.
     """
-    r=subprocess.run([sys.executable, os.path.join(VERIFY,"verify_algorithm.py"),
-                      "-n","12"], capture_output=True, text=True, cwd=VERIFY)
+    verifier=os.path.join(paths.algorithm(ALG),"verify","verify_algorithm.py")
+    if not os.path.exists(verifier):
+        print("!! no verifier for", ALG, "-- answer check SKIPPED", file=sys.stderr)
+        return
+    r=subprocess.run([sys.executable, verifier, "-n","12"],
+                     capture_output=True, text=True,
+                     cwd=os.path.dirname(verifier))
     tail=[l for l in r.stdout.strip().splitlines() if l.strip()]
     print("algorithm check:", tail[-1].strip() if tail else "(no output)")
     if r.returncode!=0:
         sys.stdout.write(r.stdout); sys.stderr.write(r.stderr)
-        sys.exit("\nBUILD ABORTED: the cascade does not compute a correct "
-                 "maximum flow.\nRun `python3 verify_algorithm.py` for "
-                 "detail.\nindex.html was NOT written.")
+        sys.exit(f"\nBUILD ABORTED: {ALG} failed its own verifier.\n"
+                 f"Run {verifier} directly for detail.\n"
+                 f"index.html was NOT written.")
 
 def verify_driver():
     """The driven trace must agree with the independent implementation.
@@ -110,6 +121,8 @@ verify_driver()
 
 # ---- the trace, produced by running the spec -----------------------------
 INSTANCE=json.load(open(os.path.join(SPEC,"instance.json")))
+CASCADE=json.load(open(os.path.join(SPEC,"cascade.json")))
+ALIAS=CASCADE.get("displayNames",{})
 _run=driver.run(ALG)
 T=ann.annotate({"steps":_run["steps"]}, meta, view)
 T["iterations"]=_run["generations"]
@@ -121,22 +134,25 @@ if view and hasattr(view,"headline"):
     T.update(view.headline(T["steps"][-1]["state"]))
 print(f"driven trace  : {len(T['steps'])} steps, "
       f"{T['iterations']} generations"
-      + (f", max flow {T['maxFlow']}" if "maxFlow" in T else ""))
+      + (f", {T['headline']['label']} {T['headline']['value']}"
+         if "headline" in T else ""))
 # The IR program and the interpreter get inlined verbatim so the page stays a
 # single self-contained file. The same edge_interp.js drives verify_interp.js,
 # so what the modal shows is exactly what the oracle checked.
-IR=json.load(open(os.path.join(SPEC,"max_flow_program.json")))
+IR=json.load(open(driver._program_file(paths.spec(ALG))))
 INTERP=open(os.path.join(HERE,"edge_interp.js"),encoding="utf-8").read()
 
-# Spec einsum ID -> position in the IR cascade. E04's three-arm `cases` has no
-# IR node and is lowered to three sequential writes to R. Mirrors EINSUM_INDEX
-# in verify_interp.js and in the edge-ir-interpreter test suite.
-EINSUM_IDX={"E01":0,"E02":1,"E03":2,"E04":[3,4,5],"E05":6,"E06":7,"E07":8,
-            "E08":9,"E09":10,"E10":11,"E11":12,"E12":13,"E13":14,"E14":15,
-            "E15":16,"E16":17,"E17":18,"E18":19,"E19":20,"E20":21,"E21":22,
-            "E22":23,"E23":24,"E24":25}
+# Spec einsum label -> position in the IR cascade, read from the algorithm's
+# own cascade.json rather than repeated here. A label mapping to a LIST is one
+# written Einsum lowered to several IR nodes. The drill-down needs this to
+# recompute the Einsum the reader is looking at.
+EINSUM_IDX={**CASCADE.get("setup",{}), **CASCADE.get("body",{})}
 
-SEQ=json.load(open(os.path.join(FIX,"maxflow_seq_trace.json")))
+# Compare mode races this cascade against another trace -- the textbook
+# pseudocode, for max-flow. An algorithm with nothing to race against says so
+# by not declaring one, and the control hides itself.
+_cmp=CASCADE.get("compare",{}).get("trace")
+SEQ=json.load(open(os.path.join(FIX,_cmp))) if _cmp else None
 
 def annotate_edge_trace(T):
     """Give the EDGE trace the same header the sequential one already carries.
@@ -171,22 +187,34 @@ def annotate_edge_trace(T):
         "label":"EDGE — the cascade",
         "sublabel":"every active vertex acts in the same round",
         "domainView":(view.DOMAIN_VIEW if view and hasattr(view,"DOMAIN_VIEW")
-                      else INSTANCE.get("domain",{}).get("view","flow-graph")),
+                      else INSTANCE.get("domain",{}).get("view")),
         "rounds":rounds,"operations":sum(counts.values()),
         "opCounts":counts,
     })
     return T
 
-POS={0:(45,150),1:(180,55),3:(330,55),2:(180,245),4:(330,245),5:(470,150)}
 RANKS={n:len(r) for n,r in meta.RANKNAMES.items()}
-STATEFUL={"E","D","Act","F","R"}
+# Which tensors the before/after toggle can step back through: the ones that
+# carry a value from one generation to the next. Declared by the algorithm --
+# the tool cannot know which of a spec's tensors are state and which are
+# scratch without reading the spec, and meta.py is where the algorithm says
+# what its tensors are for.
+STATEFUL=set(getattr(meta,"STATEFUL",()))
+# How the domain view draws this algorithm. Everything in here is data: the
+# layout, which tensor labels a node, which colours a vertex. A second graph
+# algorithm is a different block, not a different renderer.
+DOMAIN=dict(INSTANCE.get("domain",{}))
+DOMAIN.setdefault("positions",{})
+# Page chrome: the algorithm's own name for itself, and where it links back to.
+TITLE=getattr(meta,"TITLE",ALG+" — tensor view")
+CRUMB=getattr(meta,"CRUMB",getattr(meta,"TITLE",ALG))
+EXTENTS=INSTANCE.get("extent",{})
 # Only the tensors that persist: the fixed inputs and the generational state.
 # Intermediates are no longer given permanent blocks -- they exist for one
 # Einsum, and the execution panel shows each one at the moment it is computed
 # and again where it is read, which is more informative than a grid that is
 # empty most of the time.
-GROUPS={"static1":["S","T","NST"], "static2":["C"],
-        "state1":["E","D","Act"], "state2":["F","R"]}
+GROUPS=getattr(meta,"GROUPS",{})
 
 # Every grid states the tensor's declared empty value, because absence means
 # something different on each one: 0 on a flow, +inf on a height, false on a
@@ -213,7 +241,7 @@ for s in T["steps"]:
     s["stateful"]=s.get("output") in STATEFUL
     s["hasPrior"]=bool(s.get("output")) and s["einsum"]!="stop"
 
-HTML = r"""<!doctype html><html><head><meta charset="utf-8"><title>EDGE Max-Flow — tensor view</title>
+HTML = r"""<!doctype html><html><head><meta charset="utf-8"><title>PAGETITLE</title>
 <script>window.MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["\\[","\\]"],["$$","$$"]],
   packages:{"[+]":["ams"]}},chtml:{scale:1.0},startup:{typeset:false}};</script>
 <script async id="mjx" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
@@ -421,7 +449,7 @@ svg text{font-family:-apple-system,Segoe UI,sans-serif}
 <div id="tip"></div>
 <header class="site-header"><div class="wrap">
   <a class="site-title" href="/">EDGE Algorithms</a>
-  <p class="crumb"><a href="/algorithms/maximum-flow/">Maximum Flow (Push-Relabel)</a>
+  <p class="crumb">CRUMBHTML
      &nbsp;›&nbsp; interactive tensor walkthrough</p>
   <div id="modes">
    <button class="mode" id="mode-step" aria-pressed="true">
@@ -435,11 +463,8 @@ svg text{font-family:-apple-system,Segoe UI,sans-serif}
  <div id="left">
   <div class="panel"><h3>Graph</h3><svg id="g" width="540" height="310"></svg>
    <div id="legend">
-    <div><b>on each edge</b> <code>F(u,v) / C(u,v)</code> — flow carried, out of capacity &nbsp;·&nbsp;
-     <b>on each node</b> <code>d=</code> distance <i>D(u)</i>, <code>e=</code> excess <i>E(u)</i></div>
-    <div><span><span class="sw" style="background:#fff3bf"></span>active vertex (in <code>Act</code>)</span>
-     <span><span class="sw" style="background:#d3f9d8"></span>source</span><span><span class="sw" style="background:#ffe3e3"></span>sink</span>
-     <span><span class="sw" style="background:#e8590c"></span>touched this step</span></div>
+    <div id="domlegend"></div>
+    <div id="fillegend"><span><span class="sw" style="background:#e8590c"></span>touched this step</span></div>
     <div><span><span class="sw" style="background:#fff"></span>stored 0</span>
      <span><span class="sw" style="background:repeating-linear-gradient(45deg,#f7f7f7,#f7f7f7 3px,#ececec 3px,#ececec 6px)"></span>empty
       — <b>what empty means is per tensor</b>, so every grid carries its declared
@@ -512,8 +537,11 @@ svg text{font-family:-apple-system,Segoe UI,sans-serif}
 const IR=IRPROGRAM, EIDX=EINSUMIDX;
 </script>
 <script>
-const T=TRACE,POS=POSITIONS,RANKS=RANKMAP,GROUPS=GROUPMAP,RN=RANKNAMES,DESC=DESCS;
-const N=T.graph.nodes.length,EDGES=T.graph.edges,S=T.graph.source,SK=T.graph.sink;
+const T=TRACE,DOM=DOMAINCFG,POS=DOM.positions||{},RANKS=RANKMAP,GROUPS=GROUPMAP,RN=RANKNAMES,DESC=DESCS;
+/* The extent comes from the instance, not from the picture: an algorithm
+   with no graph still has ranks to size its grids by. */
+const N=Math.max(...Object.values(EXTENTMAP)),
+      EDGES=(DOM.graph&&DOM.graph.edges)||[];
 let cur=0,timer=null,showBefore=false; const $=id=>document.getElementById(id);
 $('slider').max=T.steps.length-1;
 
@@ -524,6 +552,25 @@ function typeset(s){
     .replace(/([⋀⋁⋘])/g,'<span class="op">$1</span>')
     .replace(/::/g,'<span class="sep">::</span>');
 }
+/* The domain legend is written from the same block that drives the drawing,
+   so a page cannot describe one picture and draw another. */
+(function domainLegend(){
+  const el2=(h)=>{const d=document.createElement('div');d.innerHTML=h;return d;};
+  const parts=[];
+  if(DOM.edgeLabel){
+    const L=DOM.edgeLabel;
+    parts.push('<b>on each edge</b> <code>'+L.tensor+'(u,v)'+
+      (L.over?' / '+L.over:'')+'</code>');}
+  if((DOM.nodeLabels||[]).length){
+    parts.push('<b>on each node</b> '+(DOM.nodeLabels||[]).map(
+      (L)=>'<code>'+(L.prefix||'')+'</code> '+L.tensor).join(', '));}
+  if(parts.length)$('domlegend').innerHTML=parts.join(' &nbsp;·&nbsp; ');
+  const fills=(DOM.nodeFill||[]).map(
+    (r)=>'<span><span class="sw" style="background:'+r.color+'"></span>'+
+         (r.label||r.tensor)+'</span>').join('');
+  $('fillegend').insertAdjacentHTML('afterbegin',fills);
+})();
+
 const NS='http://www.w3.org/2000/svg';
 function el(n,a){const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e;}
 /* ---- domain views ----------------------------------------------------
@@ -534,7 +581,12 @@ function el(n,a){const e=document.createElementNS(NS,n);for(const k in a)e.setAt
    viewer. */
 const DOMAIN_VIEWS={};
 
-DOMAIN_VIEWS['flow-graph']=function(g,st,hl,pv){
+/* A graph, drawn from a description rather than from knowledge of one
+   algorithm. The instance's `domain` block says where the vertices go, which
+   tensor labels an edge, which tensors colour a node and which label it. So
+   BFS and Dijkstra reuse this renderer with a different block; only a genuinely
+   different PICTURE -- a matrix, a board -- is a new entry here. */
+DOMAIN_VIEWS['graph']=function(g,st,hl,pv){
   g.innerHTML='';const defs=el('defs');
   // a label plus, when its rendered text just changed, a highlight pill behind it
   const lab=(x,y,txt,was,col)=>{
@@ -564,21 +616,39 @@ DOMAIN_VIEWS['flow-graph']=function(g,st,hl,pv){
     const on=isLit(e);
     g.appendChild(el('line',{x1:sx,y1:sy,x2:tx,y2:ty,stroke:on?'#e8590c':'#999',
       'stroke-width':on?3:1.4,'marker-end':`url(#${on?'ah':'a'})`}));
-    const fv=q=>{const f=q?(q[e.u+','+e.v]??0):0;return `${f<0?0:f}/${e.cap}`;};
-    lab((sx+tx)/2+px*13,(sy+ty)/2+py*13+4,fv(st.F),pv?fv(pv.F):null,on?'#e8590c':'#555');});
-  T.graph.nodes.forEach(v=>{const[x,y]=POS[v],on=hln.has(v),act=st.Act&&st.Act[v];
-    g.appendChild(el('circle',{cx:x,cy:y,r:22,fill:v===S?'#d3f9d8':v===SK?'#ffe3e3':act?'#fff3bf':'#fff',
+    const EL=DOM.edgeLabel;
+    if(EL){
+      const fv=q=>{
+        let f=q?((q[EL.tensor]||{})[e.u+','+e.v]??EL.empty??0):(EL.empty??0);
+        if(EL.clampNegative&&f<0)f=0;
+        return EL.over?`${f}/${e[EL.over]}`:String(f);};
+      lab((sx+tx)/2+px*13,(sy+ty)/2+py*13+4,fv(st),pv?fv(pv):null,
+          on?'#e8590c':'#555');}});
+  (DOM.graph.nodes||[]).forEach(v=>{
+    const[x,y]=POS[v]||[0,0],on=hln.has(v);
+    // First matching rule wins, so the instance orders them by priority --
+    // source and sink before "currently active", which is what a reader
+    // expects when a vertex is both.
+    let fill='#fff';
+    for(const r of (DOM.nodeFill||[])){
+      const t=st[r.tensor]||{};
+      if(t[v]!==undefined&&t[v]!==false){fill=r.color;break;}}
+    g.appendChild(el('circle',{cx:x,cy:y,r:22,fill:fill,
       stroke:on?'#e8590c':'#555','stroke-width':on?3:1.5}));
-    const a=el('text',{x:x,y:y+4,'text-anchor':'middle','font-size':14,'font-weight':600});a.textContent=v;g.appendChild(a);
-    const dv=q=>'d='+(q&&q.D?(q.D[v]??'∞'):'');
-    const ev=q=>'e='+(q&&q.E?(q.E[v]??0):0);
-    lab(x,y-29,dv(st),pv?dv(pv):null,'#0b7285');
-    lab(x,y+36,ev(st),pv?ev(pv):null,'#c92a2a');});
+    const a=el('text',{x:x,y:y+4,'text-anchor':'middle','font-size':14,'font-weight':600});
+    a.textContent=v;g.appendChild(a);
+    (DOM.nodeLabels||[]).forEach((L,i)=>{
+      const txt=q=>(L.prefix||'')+
+        (q&&q[L.tensor]?(q[L.tensor][v]??L.empty??''):(L.empty??''));
+      const dy=L.place==='below'?36:-29;
+      lab(x,y+dy,txt(st),pv?txt(pv):null,L.color||'#555');});});
 };
 
 // The main pane always draws the EDGE trace into #g.
 function drawGraph(st,hl,pv){
-  DOMAIN_VIEWS[T.domainView||'flow-graph']($('g'),st,hl,pv);}
+  const v=DOMAIN_VIEWS[T.domainView];
+  if(!v){$('g').innerHTML='';return;}          // no view: leave the pane blank
+  v($('g'),st,hl,pv);}
 function cell(val,changed){const td=document.createElement('td');
   if(val===undefined){td.className='absent';td.textContent='·';}
   else if(val===true){td.style.background='#8ce99a';td.textContent='T';}
@@ -677,7 +747,8 @@ function render(){
   buildExec();
   $('itbadge').innerHTML=s.iteration!=null?'<i>i</i> = '+s.iteration:'setup';
   $('stepno').textContent=`step ${cur+1} of ${T.steps.length}`;
-  $('flow').textContent = cur===T.steps.length-1 ? 'max flow = '+T.maxFlow : '';
+  $('flow').textContent = (cur===T.steps.length-1 && T.headline)
+    ? T.headline.label+' = '+T.headline.value : '';
   $('slider').value=cur;}
 function delay(){return 1260-(+$('speed').value);}
 function go(i){showBefore=false;cur=Math.max(0,Math.min(T.steps.length-1,i));render();}
@@ -758,7 +829,7 @@ function buildExec(coord){
   let R;
   try{
     R=EdgeInterp.evalEinsum(IR,irIndexFor(s),before,
-        {N:N, recordedOutput:s.state[s.output]});
+        {N:N, recordedOutput:s.state[s.output], tensorAlias:DISPLAY});
   }catch(err){ console.error(err);
     EXEC=null; panel.classList.add('off');
     $('execsub').textContent='— could not be replayed in the browser';
@@ -890,7 +961,7 @@ function collectReads(p,acc){
   return acc;}
 
 // IR tensor name -> the name used everywhere else on the page.
-const DISPLAY={Delta:'delta'};
+const DISPLAY=ALIASMAP;
 function shownName(t){return DISPLAY[t]||t;}
 
 function declOf(name){return IR.declarations.find(d=>d.name===name);}
@@ -1206,20 +1277,24 @@ function stateAt(tr,round){
     if(r<=round)best=st; else break;}
   return best;}
 
-function flowInto(state,sink){
-  let f=0;
-  for(const key in (state.F||{})){
-    const [u,v]=key.split(',').map(Number);
-    if(v===sink&&state.F[key]>0)f+=state.F[key];}
-  return f;}
+/* The third tally in compare mode: how far along each side is. What that
+   means is the algorithm's business, so the instance names a tensor and a
+   coordinate to read -- "the progress this race is about". Without one, the
+   tally is dropped rather than guessed at. */
+function progressAt(state){
+  const P=DOM.progress;
+  if(!P)return null;
+  const v=(state[P.tensor]||{})[P.coord];
+  return v===undefined?0:v;}
 
 // Operations completed by the end of a round.
 function opsBy(tr,round){
   let n=0;
   for(const st of tr.steps){
     if(st.round===null||st.round===undefined||st.round>round)continue;
-    if(st.opKind==='push'||st.opKind==='relabel')
-      n+=(st.concurrency!==undefined?st.concurrency:1);}
+    // Any named operation counts. Which names exist is the algorithm's
+    // business; the race only needs to know that something happened.
+    if(st.opKind)n+=(st.concurrency!==undefined?st.concurrency:1);}
   return n;}
 
 function tallyHtml(tr,round,other){
@@ -1229,8 +1304,10 @@ function tallyHtml(tr,round,other){
   return '<div class="'+win(tr.rounds,other.rounds)+'"><b>'+r+
     (done?'':' / '+tr.rounds)+'</b><span>rounds</span></div>'+
     '<div><b>'+o+'</b><span>operations</span></div>'+
-    '<div><b>'+flowInto(stateAt(tr,r).state,tr.graph.sink)+
-    '</b><span>flow to sink</span></div>';}
+    (DOM.progress
+      ? '<div><b>'+progressAt(stateAt(tr,r).state)+
+        '</b><span>'+(DOM.progress.label||'progress')+'</span></div>'
+      : '');}
 
 // What happened in one round. A sequential step describes itself; a
 // bulk-synchronous round is better summarised by how many vertices acted,
@@ -1238,13 +1315,14 @@ function tallyHtml(tr,round,other){
 function roundCaption(tr,r,st){
   if(tr.variant!=='edge')return st.caption||'';
   if(r<1)return st.caption||'';
-  let p=0,rl=0;
-  tr.steps.forEach(x=>{if(x.round!==r)return;
-    if(x.opKind==='push')p=x.concurrency||0;
-    if(x.opKind==='relabel')rl=x.concurrency||0;});
-  const bits=[];
-  if(p)bits.push('<b>'+p+'</b> '+(p===1?'vertex':'vertices')+' pushed');
-  if(rl)bits.push('<b>'+rl+'</b> relabelled');
+  // One tally per operation kind the algorithm declared, in the order it
+  // declared them. Reading the names off the trace rather than knowing them
+  // is what lets a different algorithm race without touching this.
+  const per={};
+  tr.steps.forEach(x=>{if(x.round!==r||!x.opKind)return;
+    per[x.opKind]=(per[x.opKind]||0)+(x.concurrency||0);});
+  const bits=Object.entries(per).filter(([,n])=>n)
+    .map(([k,n])=>'<b>'+n+'</b> '+k);
   return (bits.join(', ')||'nothing to do')+
     ' — all in the same round.';}
 
@@ -1269,7 +1347,7 @@ function renderCompare(){
     $(sid).classList.toggle('done',cmpTick>=tr.rounds);
     $(cid).innerHTML=cmpTick>=tr.rounds
       ? '<span class="finished">Finished in '+tr.rounds+
-        ' rounds — maximum flow '+tr.maxFlow+'.</span>'
+        ' rounds'+(tr.headline?' — '+tr.headline.label+' '+tr.headline.value:'')+'.</span>'
       : roundCaption(tr,r,st);});
 
   // Per-round concurrency: how many vertices acted. The sequential side is a
@@ -1337,7 +1415,8 @@ document.getElementById('mjx').addEventListener('load',()=>{
 </script></body></html>"""
 # Placeholder names must not contain one another: `.replace("TRACE", ...)`
 # would otherwise chew the middle out of "SEQTRACE" and leave a syntax error.
-_PH=["TRACE","POSITIONS","RANKMAP","GROUPMAP","RANKNAMES","DESCS",
+_PH=["TRACE","DOMAINCFG","EXTENTMAP","RANKMAP","GROUPMAP","RANKNAMES","DESCS","ALIASMAP",
+     "PAGETITLE","CRUMBHTML",
      "IRPROGRAM","EINSUMIDX","SEQDATA"]
 for _a in _PH:
     for _b in _PH:
@@ -1345,10 +1424,12 @@ for _a in _PH:
             sys.exit(f"placeholder {_a!r} is a substring of {_b!r}; rename one")
 
 out=(HTML.replace("/*INTERPRETER*/",INTERP)
-     .replace("TRACE",json.dumps(annotate_edge_trace(T))).replace("POSITIONS",json.dumps(POS))
+     .replace("TRACE",json.dumps(annotate_edge_trace(T)))
+     .replace("DOMAINCFG",json.dumps(DOMAIN)).replace("EXTENTMAP",json.dumps(EXTENTS))
+     .replace("PAGETITLE",TITLE).replace("CRUMBHTML",CRUMB)
      .replace("RANKMAP",json.dumps(RANKS)).replace("GROUPMAP",json.dumps(GROUPS))
      .replace("RANKNAMES",json.dumps(meta.RANKNAMES)).replace("DESCS",json.dumps(meta.DESC))
      .replace("IRPROGRAM",json.dumps(IR)).replace("EINSUMIDX",json.dumps(EINSUM_IDX))
-     .replace("SEQDATA",json.dumps(SEQ)))
+     .replace("SEQDATA",json.dumps(SEQ)).replace("ALIASMAP",json.dumps(ALIAS)))
 open(os.path.join(OUT,"index.html"),"w").write(out)
 print("index.html written:",os.path.join(OUT,"index.html"),len(out),"bytes")

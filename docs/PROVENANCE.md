@@ -4,15 +4,21 @@ Every number on a generated page is produced by **executing the
 specification**. Nothing is read from a recorded run.
 
 ```
-algorithms/<alg>/spec/
-  <program>.json   the IR: the algorithm, as Einsums
-  instance.json    the input: capacities, source, sink, extents
-  cascade.json     structure the IR does not carry: where the loop starts,
-                   where the stopping condition is tested, which rule each
-                   free choice uses
-  meta.py          LaTeX and per-Einsum prose
-  view.py          OPTIONAL. Domain view, and phrasing for the few steps
-                   where the derived caption reads badly
+algorithms/<alg>/
+  spec/
+    <program>.json   the IR: the algorithm, as Einsums
+    instance.json    the input, and how to draw it: tensors, extents,
+                     vertex positions, which tensor labels a node or an edge
+    cascade.json     structure the IR does not carry: where the loop starts,
+                     where the stopping condition is tested, which rule each
+                     free choice uses, display aliases
+    meta.py          LaTeX, per-Einsum prose, tensor groups, page title
+    view.py          OPTIONAL. Phrasing for the few steps where the derived
+                     caption reads badly, and what counts as an operation
+  fixtures/          recorded traces: the second opinion, never an input
+  reference/         hand-written implementations, same role
+  verify/            the algorithm's own answer check
+  tests/             what is specific to this algorithm
         │
         ▼
 edge_workbench/driver/cascade.js      executes it, one Einsum at a time
@@ -55,6 +61,35 @@ evaluator in `edge-ir-interpreter` and compares the loop-carried state cell by
 cell. That repo is **private**, so this is a test and never a build step: a
 clean clone builds with `node` and nothing else. When the sibling checkout is
 present, set `EDGE_IR_REPO` and the comparison runs; when it is not, it skips.
+
+## Nothing in the tool knows an algorithm
+
+`edge_workbench/` contains no tensor names, no Einsum labels, no `push` or
+`relabel`, no CLRS. Everything it needs, it reads:
+
+| it used to hard-code | it now reads |
+|---|---|
+| `EINSUM_IDX` for E01–E24 | `cascade.json`'s `setup` + `body` |
+| `{Delta: "delta"}` in the interpreter | `cascade.json`'s `displayNames`, passed by the caller |
+| `max_flow_program.json` | the one IR program in `spec/`, found not named |
+| vertex positions, node and edge labels, fill colours | `instance.json`'s `domain` block |
+| `GROUPS`, `STATEFUL`, the page title | `meta.py` |
+| `flow-graph`, a renderer that knew about flow | a `graph` renderer driven by that `domain` block |
+| `max flow = N` in the corner | `view.headline()`, as `{label, value}` |
+| counting `push` and `relabel` by name | whatever operation kinds the trace declares |
+| a max-flow verifier in `edge_workbench/verify/` | `algorithms/<alg>/verify/`, run if present |
+
+The audit is mechanical: grep the tool for algorithm words and every hit is a
+comment explaining a point, not code acting on it.
+
+### What is still algorithm-shaped, and known to be
+
+`algorithms/max-flow/tests/check_page.js` — 163 checks, most of which are
+about the *viewer* (transport, before/after, empty-value labels, the execution
+panel) and would serve any algorithm, and some of which are about push-relabel.
+It lives under the algorithm because that is what it currently is. Splitting
+the generic half into `tests/` is the next job, and until it is done the
+second algorithm starts with no page checks.
 
 ## Vendoring
 

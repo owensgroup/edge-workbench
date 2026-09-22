@@ -32,20 +32,57 @@
 
 const fs = require("fs");
 const path = require("path");
+
+/** The algorithm to work on: named, or the only one there is. */
+function defaultAlg(root) {
+  const dir = path.join(root, "algorithms");
+  const names = fs.readdirSync(dir).filter(
+    (n) => !n.startsWith(".") && fs.statSync(path.join(dir, n)).isDirectory());
+  if (names.length === 1) return names[0];
+  throw new Error(
+    `${names.length} algorithms available (${names.join(", ")}); say which ` +
+    `with EDGE_WORKBENCH_ALG`);
+}
+
 const { runCascade, makeSelector, replaySelector } =
   require("../edge_workbench/driver/cascade.js");
 
-const ALG = process.env.EDGE_WORKBENCH_ALG || "max-flow";
+const ALG = process.env.EDGE_WORKBENCH_ALG || defaultAlg(path.join(__dirname, ".."));
 const ROOT = path.join(__dirname, "..");
 const SPEC = path.join(ROOT, "algorithms", ALG, "spec");
 const FIX = path.join(ROOT, "algorithms", ALG, "fixtures");
 const VERBOSE = process.argv.includes("-v");
 
 const read = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
-const program = read(path.join(SPEC, "max_flow_program.json"));
+const program = read(programFile(SPEC));
+
+/** The IR program in a spec directory: found, not named. */
+function programFile(dir) {
+  const own = new Set(["cascade.json", "instance.json"]);
+  const found = fs.readdirSync(dir)
+    .filter((f) => f.endsWith(".json") && !own.has(f));
+  if (found.length !== 1) {
+    throw new Error(`expected one IR program in ${dir}, found ${found}`);
+  }
+  return path.join(dir, found[0]);
+}
 const instance = read(path.join(SPEC, "instance.json"));
 const cascade = read(path.join(SPEC, "cascade.json"));
-const golden = read(path.join(FIX, "maxflow_edge_trace.json"));
+const golden = read(recordedTrace());
+// What this algorithm expects of itself. Everything else in this file is a
+// property any cascade should have.
+const EXPECT = read(path.join(ROOT, "algorithms", ALG, "tests", "expect.json"));
+
+/** The recorded trace an algorithm is compared against. */
+function recordedTrace() {
+  const files = fs.readdirSync(FIX).filter((f) => /trace\.json$/.test(f));
+  const seq = (cascade.compare || {}).trace;
+  const own = files.filter((f) => f !== seq);
+  if (own.length !== 1) {
+    throw new Error(`expected one recorded trace in ${FIX}, found ${own}`);
+  }
+  return path.join(FIX, own[0]);
+}
 
 let pass = 0;
 const fails = [];
@@ -110,13 +147,9 @@ check("it took the same number of generations",
 // Replay proves the loop and the evaluator; it does not prove the driver can
 // run without a recording to lean on. This one makes its own choices.
 const ruled = runCascade(program, instance, cascade, {});
-const finalF = ruled.steps[ruled.steps.length - 1].state.F || {};
-let outOfSource = 0;
-Object.entries(finalF).forEach(([c, v]) => {
-  if (Number(c.split(",")[0]) === 0) outOfSource += v;
-});
 check("a run that makes its own choices still reaches the published answer",
-  outOfSource === 23, `net flow out of the source: ${outOfSource}`);
+  headlineOf(ruled) === EXPECT.headline.value,
+  `${EXPECT.headline.label}: ${headlineOf(ruled)}, expected ${EXPECT.headline.value}`);
 check("and it terminates in a comparable number of generations",
   ruled.generations > 0 && ruled.generations < 40, String(ruled.generations));
 
@@ -129,33 +162,31 @@ check("and it terminates in a comparable number of generations",
 // If the answer ever moved, the choice would not be free and the spec would
 // be understating itself. If the work never moved, the selector would not be
 // reaching the cascade at all and every check here would be vacuous.
-const CAP = Object.fromEntries(
-  Object.entries(instance.tensors.C).map(([k, v]) => [k, v]));
+/* Is the ANSWER right, and how much work did it take? Whether the answer is
+   a valid one -- a feasible flow, a real shortest path -- is a question only
+   the algorithm can answer, and its own verifier
+   (algorithms/<alg>/verify/) is where that lives. Asking it here would mean
+   writing a second, worse copy. */
+function headlineOf(r) {
+  const last = r.steps[r.steps.length - 1].state;
+  const t = last[EXPECT.headline.tensor || "F"] || {};
+  // Net out of the first coordinate, which is what "the value of the result"
+  // means for every algorithm the expect file has described so far.
+  return Object.entries(t).reduce(
+    (a, [c, v]) => a + (c.split(",")[0] === (EXPECT.headline.at || "0") ? v : 0), 0);
+}
 
-/** Value of the flow, and whether it is a flow at all. */
 function appraise(r) {
-  const F = r.steps[r.steps.length - 1].state.F || {};
-  let value = 0;
-  const net = {};
-  const problems = [];
-  Object.entries(F).forEach(([c, f]) => {
-    const [u, v] = c.split(",").map(Number);
-    net[u] = (net[u] || 0) + f;
-    if (f > 0 && f > (CAP[c] || 0)) problems.push(`${c} carries ${f} > cap`);
-    const back = F[`${v},${u}`] || 0;
-    if (back !== -f) problems.push(`${c} not antisymmetric`);
-  });
-  Object.entries(net).forEach(([u, n]) => {
-    if (Number(u) !== 0 && Number(u) !== 5 && n !== 0)
-      problems.push(`vertex ${u} leaks ${n}`);
-  });
-  value = net[0] || 0;
-  let pushes = 0;
+  const out = r.steps[r.steps.length - 1].state[EXPECT.operation.tensor] || {};
+  let work = 0;
   r.steps.forEach((s) => {
-    if (s.einsum === "E11") pushes += Object.keys(s.state.delta || {}).length;
+    if (s.einsum === EXPECT.operation.step)
+      work += Object.keys(s.state[EXPECT.operation.tensor] || {}).length;
   });
-  return { value, pushes, problems,
-           shape: JSON.stringify(Object.entries(F).sort()) };
+  const shapeOf = r.steps[r.steps.length - 1]
+    .state[EXPECT.headline.tensor || "F"] || {};
+  return { value: headlineOf(r), work,
+           shape: JSON.stringify(Object.entries(shapeOf).sort()) };
 }
 
 const runs = [];
@@ -171,21 +202,19 @@ for (let seed = 0; seed < 25; seed++) {
 });
 
 const values = new Set(runs.map((r) => r.value));
-const work = new Set(runs.map((r) => r.pushes));
+const work = new Set(runs.map((r) => r.work));
 const shapes = new Set(runs.map((r) => r.shape));
-const broken = runs.filter((r) => r.problems.length);
 
-check("27 ways of choosing, and every one reaches the published answer",
-  values.size === 1 && values.has(23), [...values].join(","));
-check("every one of them is a feasible flow, not just the right number",
-  broken.length === 0, broken.slice(0, 2).map((r) => r.problems[0]).join("; "));
+check(`${runs.length} ways of choosing, and every one reaches the published answer`,
+  values.size === 1 && values.has(EXPECT.headline.value),
+  [...values].join(","));
 // Work, not generations. A parallel round advances every active vertex, so on
 // this graph the round count is insensitive to which edge each one picks --
 // but the number of pushes is not, and neither is where the flow ends up.
 check("but the work varies, so the choice is really reaching the cascade",
-  work.size > 1, `pushes seen: ${[...work].sort((a, b) => a - b).join(", ")}`);
-check("and different choices reach different, equally maximum, flows",
-  shapes.size > 1, "every choice produced the identical flow assignment");
+  work.size > 1, `work seen: ${[...work].sort((a, b) => a - b).join(", ")}`);
+check("and different choices reach different, equally good, results",
+  shapes.size > 1, "every choice produced an identical result");
 check("the same seed gives the same run, so a build is reproducible",
   JSON.stringify(appraise(runCascade(program, instance, cascade, {
     selector: makeSelector({ "pick-admissible-edge": { rule: "seeded", seed: 7 } }),
@@ -216,15 +245,18 @@ if (process.argv.includes("--self-test")) {
       i2.tensors.C["0,1"] = 15;          // was 16
       return [program, i2, cascade];
     }],
-    ["two body Einsums run in the wrong order", () => {
+    [`${EXPECT.faults.swap.join(" and ")} run in the wrong order`, () => {
       const c2 = clone(cascade);
-      const b = c2.body;
-      const t = b.E12; b.E12 = b.E13; b.E13 = t;
+      const [x, y] = EXPECT.faults.swap;
+      const t = c2.body[x]; c2.body[x] = c2.body[y]; c2.body[y] = t;
       return [program, instance, c2];
     }],
-    ["one arm of E04's lowered `cases` dropped", () => {
+    [`one arm of ${EXPECT.faults.truncateArms}'s lowered \`cases\` dropped`,
+     () => {
       const c2 = clone(cascade);
-      c2.setup.E04 = c2.setup.E04.slice(0, 2);
+      const L = EXPECT.faults.truncateArms;
+      const where = c2.setup[L] !== undefined ? c2.setup : c2.body;
+      where[L] = where[L].slice(0, -1);
       return [program, instance, c2];
     }],
   ];

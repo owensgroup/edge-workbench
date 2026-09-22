@@ -10,7 +10,9 @@
   "scalars fill in zero-rank tensors the IR declares but cannot value:",
   "VertexCount is |V|, which is graph data a host supplies alongside C.",
   "",
-  "G is the adjacency the cascade never reads -- C carries the capacities. It is seeded anyway because the IR declares it as an input and the reference evaluator is given it, and an input present on one side only would show up as a disagreement about the algorithm when it is a disagreement about setup."
+  "G is the adjacency the cascade never reads -- C carries the capacities. It is seeded anyway because the IR declares it as an input and the reference evaluator is given it, and an input present on one side only would show up as a disagreement about the algorithm when it is a disagreement about setup.",
+  "",
+  "domain: how the page draws this instance. The renderer is generic -- it places vertices, colours them by which tensor holds them, and labels them and the edges from named tensors -- so another graph algorithm is a different block here, not a different renderer."
  ],
  "extent": {
   "U": 6,
@@ -52,7 +54,7 @@
   }
  },
  "domain": {
-  "view": "flow-graph",
+  "view": "graph",
   "graph": {
    "nodes": [
     0,
@@ -116,6 +118,75 @@
    ],
    "source": 0,
    "sink": 5
+  },
+  "positions": {
+   "0": [
+    45,
+    150
+   ],
+   "1": [
+    180,
+    55
+   ],
+   "3": [
+    330,
+    55
+   ],
+   "2": [
+    180,
+    245
+   ],
+   "4": [
+    330,
+    245
+   ],
+   "5": [
+    470,
+    150
+   ]
+  },
+  "nodeFill": [
+   {
+    "tensor": "S",
+    "color": "#d3f9d8",
+    "label": "source"
+   },
+   {
+    "tensor": "T",
+    "color": "#ffe3e3",
+    "label": "sink"
+   },
+   {
+    "tensor": "Act",
+    "color": "#fff3bf",
+    "label": "active vertex (in Act)"
+   }
+  ],
+  "nodeLabels": [
+   {
+    "prefix": "d=",
+    "tensor": "D",
+    "empty": "∞",
+    "color": "#0b7285",
+    "place": "above"
+   },
+   {
+    "prefix": "e=",
+    "tensor": "E",
+    "empty": 0,
+    "color": "#c92a2a",
+    "place": "below"
+   }
+  ],
+  "edgeLabel": {
+   "tensor": "F",
+   "over": "cap",
+   "clampNegative": true
+  },
+  "progress": {
+   "tensor": "E",
+   "coord": "5",
+   "label": "flow to sink"
   }
  }
 }

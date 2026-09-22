@@ -90,5 +90,8 @@
    "rule": "seeded",
    "seed": 0
   }
+ },
+ "compare": {
+  "trace": "maxflow_seq_trace.json"
  }
 }

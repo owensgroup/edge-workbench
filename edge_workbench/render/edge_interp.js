@@ -135,15 +135,16 @@ const EdgeInterp = (function () {
   // ------------------------------------------------------------ evaluation
   // Every node returns {present, value, prov} where prov is a display record.
 
-  // IR tensor name -> name used in the trace state. The IR requires tensor
-  // names to start uppercase (`^[A-Z][A-Za-z0-9_]*$`), so the tutorial's
-  // lowercase `delta` cannot be carried over verbatim. Everything else agrees.
-  const DEFAULT_ALIAS = { Delta: "delta" };
-
+  // IR tensor name -> name used in the state, supplied by the caller. The IR
+  // requires tensor names to start uppercase (`^[A-Z][A-Za-z0-9_]*$`), so a
+  // write-up's lowercase name cannot be carried over verbatim and something
+  // has to map between them -- but which names those are is a fact about one
+  // algorithm, so it arrives in `opts.tensorAlias` (from its cascade.json)
+  // rather than being compiled in here.
   function makeCtx(program, state, opts) {
     const decls = {};
     program.declarations.forEach((d) => (decls[d.name] = d));
-    const alias = Object.assign({}, DEFAULT_ALIAS, opts.tensorAlias || {});
+    const alias = Object.assign({}, opts.tensorAlias || {});
     return {
       decls,
       alias,

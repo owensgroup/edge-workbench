@@ -15,8 +15,9 @@ const fs = require("fs");
 const path = require("path");
 const { JSDOM, VirtualConsole } = require("jsdom");
 
-const ALG = process.env.EDGE_WORKBENCH_ALG || "max-flow";
-const ROOT = path.join(__dirname, "..");
+const ALG = process.env.EDGE_WORKBENCH_ALG || path.basename(
+  path.join(__dirname, ".."));
+const ROOT = path.join(__dirname, "..", "..", "..");
 const HERE = path.join(ROOT, "algorithms", ALG, "fixtures");
 const BUILD = process.env.EDGE_WORKBENCH_OUT || path.join(ROOT, "build", ALG);
 const VERBOSE = process.argv.includes("-v");
@@ -1101,10 +1102,10 @@ function run() {
   // The EDGE trace gets its header at build time, so read the embedded copy
   // rather than the file on disk.
   const eStart = html.indexOf("const T=") + 8;
-  const edge = JSON.parse(html.slice(eStart, html.indexOf(",POS=", eStart)));
+  const edge = JSON.parse(html.slice(eStart, html.indexOf(",DOM=", eStart)));
   check(
     "the EDGE trace carries the shared header",
-    edge.variant === "edge" && edge.domainView === "flow-graph" &&
+    edge.variant === "edge" && typeof edge.domainView === "string" &&
       typeof edge.rounds === "number" && typeof edge.operations === "number",
     JSON.stringify({v: edge.variant, d: edge.domainView,
                     r: edge.rounds, o: edge.operations})

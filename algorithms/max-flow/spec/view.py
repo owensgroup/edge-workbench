@@ -14,7 +14,7 @@ Nothing in here may affect the numbers. It reads state and returns strings.
 from __future__ import annotations
 
 #: Which renderer in the page's DOMAIN_VIEWS draws the left-hand pane.
-DOMAIN_VIEW = "flow-graph"
+DOMAIN_VIEW = "graph"
 
 #: Source and sink, for the pieces of phrasing that need to name them. Read
 #: from the instance rather than hard-coded, so a second instance works.
@@ -27,16 +27,17 @@ def graph(instance: dict) -> dict:
 
 
 def headline(final_state: dict) -> dict:
-    """The number the page puts in the corner when the run finishes.
+    """The one number the page puts in the corner when the run finishes.
 
-    Net flow out of the source. Computed from the final state rather than
-    carried through from a reference implementation, so it is a fact about
-    the run being shown.
+    Returned as {label, value} rather than under an algorithm-specific key,
+    so the page can show it without knowing what it is. Computed from the
+    final state, so it is a fact about the run being shown rather than
+    something carried through from elsewhere.
     """
     flow = final_state.get("F", {}) or {}
     value = sum(v for c, v in flow.items()
                 if int(c.split(",")[0]) == SOURCE)
-    return {"maxFlow": value}
+    return {"headline": {"label": "max flow", "value": value}}
 
 
 def caption(label: str, step: dict, prev: dict | None, changed: dict):

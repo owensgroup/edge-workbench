@@ -87,8 +87,6 @@ while True:
         f"Active vertices (internal, excess>0): {sorted(int(c) for c in Act)}","Act",
         {"nodes":[int(c) for c in Act],"edges":[]})
 
-    if not Act:
-        rec("stop","◇ : ‖Act_{i+1}‖ ≡ 0","No active vertex — done.","Act"); break
     if i>MAXIT: rec("abort","","ITERATION CAP HIT","Act"); break
 
     ActR={c:True for c in R if k(int(c.split(",")[0])) in Act}
@@ -185,6 +183,15 @@ while True:
     rec("E24","D_{i+1,u} = D_{i,u} · NewD_{i,u} :: ⋀ <<(∪)",
         "; ".join(f"h({c})→{v}" for c,v in NewD.items()) or "no relabel","D",
         {"nodes":[int(c) for c in NewD],"edges":[]})
+
+    # The diamond is tested HERE, after a completed generation, with i bound
+    # to the generation just finished -- so the predicate written over i+1
+    # reads what this generation produced. E19 already computed Act_{i+1};
+    # testing it at the top of the next round instead would recompute the
+    # same set and record a redundant step.
+    if not Act2:
+        rec("stop","◇ : ‖Act_{i+1}‖ ≡ 0","No active vertex — done.","Act")
+        break
     i+=1
 
 flow=E.get(k(T),0)

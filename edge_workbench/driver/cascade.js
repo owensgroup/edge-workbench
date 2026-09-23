@@ -132,29 +132,23 @@ function runCascade(program, instance, cascade, opts) {
   // not four separate moves.
   runNodes(prog.initialization.einsums || [], cascade.initLabel || "init", null);
 
-  // ---- setup: the Einsums that run once, before the loop ----------------
-  Object.entries(cascade.setup || {}).forEach(([label, idx]) =>
-    runLabel(label, idx, null));
+  // ---- which Einsums are the loop, and which run once -------------------
+  const { setup, body } = splitCascade(prog, cascade);
 
-  // ---- the body, once per generation ------------------------------------
-  const body = Object.entries(cascade.body || {});
+  setup.forEach(([label, idx]) => runLabel(label, idx, null));
+
+  // ---- the body, once per generation, tested AFTER ----------------------
+  // A do-while: the condition is checked once a generation has completed,
+  // with the iterative rank bound to the generation just finished, so a
+  // predicate written over `i+1` reads what that generation produced. The
+  // loop belongs to the generational rank -- every Einsum carrying it runs
+  // every generation -- rather than having a beginning and an end.
   const stop = prog.main_edge.cascade.stopping_conditions || [];
-  const stopAfter = cascade.stopAfter || null;
   let gen = 1;
   let stopped = false;
   for (; gen <= maxGen && !stopped; gen++) {
-    for (const [label, idx] of body) {
-      runLabel(label, idx, gen);
-      // Tested inside the round, not after it: when the condition holds the
-      // remaining Einsums do not run, and the trace shows the short final
-      // generation the recording shows.
-      if (label === stopAfter && stopHolds(prog, stop, state, N, alias)) {
-        emit(cascade.stopLabel || "stop", gen, null);
-        stopped = true;
-        break;
-      }
-    }
-    if (!stopAfter && stopHolds(prog, stop, state, N, alias)) {
+    for (const [label, idx] of body) runLabel(label, idx, gen);
+    if (stopHolds(prog, stop, state, N, alias)) {
       emit(cascade.stopLabel || "stop", gen, null);
       stopped = true;
     }
@@ -171,6 +165,91 @@ function runCascade(program, instance, cascade, opts) {
 }
 
 // --------------------------------------------------------------- pieces ---
+
+/**
+ * Which labelled Einsums run once, and which run every generation.
+ *
+ * DERIVED, not declared. An Einsum whose output generation is a rank
+ * VARIABLE (`Act_{i,u}`, `F_{i+1,u,v}`) carries the generational rank and so
+ * belongs to the loop. One whose output generation is a LITERAL
+ * (`FS_{1,u,v}`), or which has no generational rank at all (`NST_u`), does
+ * not: it computes one fixed generation and running it again would compute
+ * the same thing.
+ *
+ * "The same thing" is the part worth checking rather than assuming. Running a
+ * literal-generation Einsum once is equivalent to running it every generation
+ * only if nothing it reads changes between generations -- and a flat state,
+ * which keeps one current value per tensor rather than one per generation,
+ * would be CORRUPTED by re-running it: `F_{1,u,v} = FS . FS` re-executed in
+ * generation 5 would overwrite the live F. So a setup Einsum that reads a
+ * varying generation is refused, loudly, instead of quietly producing a
+ * wrong page.
+ */
+function splitCascade(prog, cascade) {
+  const decls = {};
+  (prog.declarations || []).forEach((d) => (decls[d.name] = d));
+  const labels = Object.entries(cascade.labels || {});
+  if (!labels.length) {
+    throw new Error("cascade.json declares no `labels`: nothing to run");
+  }
+  const nodesOf = (idx) => (Array.isArray(idx) ? idx : [idx])
+    .map((i) => prog.main_edge.cascade.einsums[i]);
+
+  const isVarGen = (r) =>
+    !!r && (r.kind === "var" ||
+            (r.kind === "arith" && (isVarGen(r.lhs) || isVarGen(r.rhs))));
+
+  const setup = [], body = [];
+  labels.forEach(([label, idx]) => {
+    const nodes = nodesOf(idx);
+    // The output's generation is position 0 only when the tensor HAS a
+    // generational rank; NST_u has none, so its `u` is not a generation.
+    const iterative = nodes.some((e) => {
+      const d = decls[e.output_tensor];
+      const generational = d && d.ranks[0] && d.ranks[0].name === "I";
+      return generational && isVarGen(e.output_ranks[0]);
+    });
+    (iterative ? body : setup).push([label, idx]);
+    if (!iterative) {
+      const reads = varGenerationReads(nodes, decls);
+      if (reads.length) {
+        throw new Error(
+          `${label} writes a fixed generation but reads ${reads.join(", ")} ` +
+          `at a varying one, so it is neither setup nor loop body. This ` +
+          `driver keeps one current value per tensor, so it cannot re-run ` +
+          `${label} each generation without overwriting live state.`);
+      }
+    }
+  });
+  return { setup, body };
+}
+
+/**
+ * Tensors a group of Einsums reads at a VARYING generation.
+ *
+ * Two things have to hold, and checking only the second is a trap: the tensor
+ * must be declared with a generational rank, AND the index in that position
+ * must be a rank variable. `S_u`'s first index is the variable `u`, but S has
+ * no generational rank, so u is not a generation and S does not vary.
+ */
+function varGenerationReads(nodes, decls) {
+  const out = new Set();
+  const isVar = (r) =>
+    !!r && (r.kind === "var" ||
+            (r.kind === "arith" && (isVar(r.lhs) || isVar(r.rhs))));
+  const walk = (n) => {
+    if (!n || typeof n !== "object") return;
+    const p = n.proj;
+    if (p && p.ranks && p.ranks.length) {
+      const d = decls[p.tensor];
+      const generational = d && d.ranks[0] && d.ranks[0].name === "I";
+      if (generational && isVar(p.ranks[0])) out.add(p.tensor);
+    }
+    Object.values(n).forEach(walk);
+  };
+  nodes.forEach((e) => walk(e.expression));
+  return [...out];
+}
 
 /** Deep-enough copy: one level of tensors, each a flat coord->value map. */
 function snapshot(state) {

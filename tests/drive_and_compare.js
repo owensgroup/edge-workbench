@@ -248,15 +248,14 @@ if (process.argv.includes("--self-test")) {
     [`${EXPECT.faults.swap.join(" and ")} run in the wrong order`, () => {
       const c2 = clone(cascade);
       const [x, y] = EXPECT.faults.swap;
-      const t = c2.body[x]; c2.body[x] = c2.body[y]; c2.body[y] = t;
+      const t = c2.labels[x]; c2.labels[x] = c2.labels[y]; c2.labels[y] = t;
       return [program, instance, c2];
     }],
     [`one arm of ${EXPECT.faults.truncateArms}'s lowered \`cases\` dropped`,
      () => {
       const c2 = clone(cascade);
       const L = EXPECT.faults.truncateArms;
-      const where = c2.setup[L] !== undefined ? c2.setup : c2.body;
-      where[L] = where[L].slice(0, -1);
+      c2.labels[L] = c2.labels[L].slice(0, -1);
       return [program, instance, c2];
     }],
   ];

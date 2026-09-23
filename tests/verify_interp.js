@@ -66,7 +66,7 @@ const N = Math.max(...Object.values(
 // cascade.json rather than repeated here. A label mapping to a LIST is one
 // written Einsum lowered to several IR nodes, which is why a written
 // numbering and the IR's diverge.
-const EINSUM_INDEX = { ...CASCADE.setup, ...CASCADE.body };
+const EINSUM_INDEX = CASCADE.labels || {};
 
 // Steps the interpreter is not expected to reproduce, and why. The first two
 // are structural; the rest are DERIVED from the program -- an Einsum whose
@@ -190,4 +190,15 @@ if (failed) {
 
 const ids = Object.keys(perEinsum).sort();
 console.log(`einsums covered: ${ids.length}  (${ids.join(" ")})`);
+if (!ids.length) {
+  // A replay that checked no einsums would report zero mismatches and call
+  // itself OK. That has happened: the cascade's label map moved and this
+  // file kept reading the old key, so every step fell through as "not in the
+  // index". Coverage is part of the result, not a statistic beside it.
+  console.log(
+    "\nFAIL: covered nothing. Every step fell through as unindexed, so the " +
+    "zero mismatches above mean nothing. Check that cascade.json's label " +
+    "map is where this file looks for it.");
+  process.exit(1);
+}
 console.log("OK");

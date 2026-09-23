@@ -146,7 +146,7 @@ INTERP=open(os.path.join(HERE,"edge_interp.js"),encoding="utf-8").read()
 # own cascade.json rather than repeated here. A label mapping to a LIST is one
 # written Einsum lowered to several IR nodes. The drill-down needs this to
 # recompute the Einsum the reader is looking at.
-EINSUM_IDX={**CASCADE.get("setup",{}), **CASCADE.get("body",{})}
+EINSUM_IDX=CASCADE.get("labels",{})
 
 # Compare mode races this cascade against another trace -- the textbook
 # pseudocode, for max-flow. An algorithm with nothing to race against says so

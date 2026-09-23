@@ -62,9 +62,24 @@ const EdgeInterp = (function () {
     "/": (a, b) => a / b,
     min: (a, b) => Math.min(a, b),
     max: (a, b) => Math.max(a, b),
+    // The six comparisons, spelled as edge_ir/udf/builtins.py spells them.
     eq: (a, b) => a === b,
+    ne: (a, b) => a !== b,
     gt: (a, b) => a > b,
+    ge: (a, b) => a >= b,
     lt: (a, b) => a < b,
+    le: (a, b) => a <= b,
+    // Integer division, rounding toward negative infinity, which is what a
+    // depth stamp's floor(F / |R|) means.
+    floordiv: (a, b) => Math.floor(a / b),
+    /* ANY: one of the contributions, where "one of" only means anything
+       among the NON-empty ones. Under a union merge a reduction is invoked
+       at points where the left operand is absent and handed the empty value,
+       and returning that would discard everything accumulated so far -- so an
+       empty operand is skipped. When both are present either is a legal
+       answer and the incumbent is kept, which makes the choice deterministic.
+       Semantics taken from edge_ir/udf/builtins.py rather than invented. */
+    any_of: (a, b, lp, rp) => (rp === false ? a : (lp === false ? b : a)),
     AND: (a, b) => Boolean(a) && Boolean(b),
     OR: (a, b) => Boolean(a) || Boolean(b),
     take_left: (a) => a,
@@ -77,7 +92,8 @@ const EdgeInterp = (function () {
   };
 
   const COMPUTE_GLYPH = {
-    "*": "×", eq: "≡", gt: ">", lt: "<",
+    "*": "×", eq: "≡", ne: "≠", gt: ">", ge: "≥", lt: "<", le: "≤",
+    floordiv: "⌊/⌋", any_of: "ANY",
     take_left: "←", take_right: "→", update: "<<",
     min: "min", max: "max", AND: "AND", OR: "OR",
   };
@@ -141,6 +157,95 @@ const EdgeInterp = (function () {
   // has to map between them -- but which names those are is a fact about one
   // algorithm, so it arrives in `opts.tensorAlias` (from its cascade.json)
   // rather than being compiled in here.
+  /* A rank expression, evaluated to a number at one point.
+     `literal` is its own value; a `var` is the coordinate bound here; a shape
+     symbol is the extent of the rank it names; `arith` combines them. */
+  function rankExprValue(node, bind, ctx) {
+    if (node == null) throw new Error("empty rank expression");
+    switch (node.kind) {
+      case "literal": return Number(node.value);
+      case "var": {
+        if (!(node.name in bind)) {
+          throw new Error(`rank variable "${node.name}" is not bound here`);
+        }
+        return Number(bind[node.name]);
+      }
+      case "shape_sym": case "shape": {
+        const sym = node.symbol || node.name;
+        const v = ctx.shapes ? ctx.shapes[sym] : undefined;
+        if (v === undefined) {
+          throw new Error(`shape symbol "${sym}" has no value; the instance ` +
+                          `must supply it (extent or scalars)`);
+        }
+        return Number(v);
+      }
+      case "arith": {
+        const a = rankExprValue(node.lhs, bind, ctx);
+        const b = rankExprValue(node.rhs, bind, ctx);
+        switch (node.op) {
+          case "+": return a + b;
+          case "-": return a - b;
+          case "*": return a * b;
+          case "/": return a / b;
+          case "//": return Math.floor(a / b);
+          case "%": return ((a % b) + b) % b;
+          default: throw new Error(`unknown rank arithmetic op "${node.op}"`);
+        }
+      }
+      default:
+        throw new Error(`unhandled rank expression node "${node.kind}"`);
+    }
+  }
+
+  function rankExprText(node) {
+    if (node == null) return "?";
+    switch (node.kind) {
+      case "literal": return String(node.value);
+      case "var": return node.name;
+      case "shape_sym": case "shape": return node.symbol || node.name;
+      case "arith":
+        return "(" + rankExprText(node.lhs) + node.op + rankExprText(node.rhs) + ")";
+      default: return "?";
+    }
+  }
+
+  /* Which declared RANK each rank variable walks, in one einsum.
+     A projection `A_{r,c}` on a tensor declared over (R, C) says r walks R
+     and c walks C. That is the only place the association exists -- a
+     variable's name says nothing about its extent -- so it is read off the
+     projections, output included.
+
+     A variable walking two ranks of DIFFERENT extent in one einsum is a real
+     error in the spec, not something to pick a winner for. */
+  function rankOfVars(einsum, ctx) {
+    const of = {};
+    const note = (tensor, ranks) => {
+      const d = ctx.decls[tensor];
+      if (!d || !ranks) return;
+      ranks.forEach((r, i) => {
+        const dr = d.ranks[i];
+        if (!dr || r.kind !== "var") return;
+        const prev = of[r.name];
+        if (prev && prev !== dr.name &&
+            ctx.extentOfRank(prev) !== ctx.extentOfRank(dr.name)) {
+          throw new Error(
+            `rank variable "${r.name}" walks rank ${prev} (extent ` +
+            `${ctx.extentOfRank(prev)}) and rank ${dr.name} (extent ` +
+            `${ctx.extentOfRank(dr.name)}) in the same einsum`);
+        }
+        of[r.name] = prev || dr.name;
+      });
+    };
+    note(einsum.output_tensor, einsum.output_ranks);
+    const walk = (n) => {
+      if (!n || typeof n !== "object") return;
+      if (n.proj) note(n.proj.tensor, n.proj.ranks);
+      Object.values(n).forEach(walk);
+    };
+    walk(einsum.expression);
+    return of;
+  }
+
   function makeCtx(program, state, opts) {
     const decls = {};
     program.declarations.forEach((d) => (decls[d.name] = d));
@@ -151,6 +256,17 @@ const EdgeInterp = (function () {
       stateName: (t) => (alias[t] !== undefined ? alias[t] : t),
       state: state,
       N: opts.N,
+      shapes: opts.shapes || {},
+      /* Per-rank extents. Ranks may be different sizes -- the IR allows it
+         and how to enumerate them is the interpreter's decision -- so a rank
+         variable is walked over the extent of the rank it indexes, not over
+         one global N. `N` remains as the fallback for a rank nobody declared
+         an extent for. */
+      extents: opts.extents || {},
+      extentOfRank: (name) => {
+        const e = opts.extents || {};
+        return e[name] !== undefined ? e[name] : opts.N;
+      },
       genVar: opts.genVar || "i",
       // rank names declared as the generational rank, per tensor
       isGenRank: (tensor, idx) => {
@@ -293,6 +409,25 @@ const EdgeInterp = (function () {
       };
     }
 
+    /* A rank expression read as a VALUE rather than as a subscript. At each
+       point of the iteration space the coordinate itself is cast into the
+       data space -- which is what a depth stamp needs:
+
+           sigma(depth, r) = depth * |R| + r
+
+       Always present: every point of the iteration space yields a coordinate,
+       so the operand's existence predicate is true everywhere and its empty
+       value is never consulted. (edge_ir/ir/expr.py, RankValue.) */
+    if (node.kind === "rank_value") {
+      const value = rankExprValue(node.expr, bind, ctx);
+      return {
+        present: true,
+        value,
+        prov: { rankValue: true, expr: rankExprText(node.expr),
+                present: true, value, scalar: true },
+      };
+    }
+
     throw new Error("unhandled expression node: " + node.kind);
   }
 
@@ -349,16 +484,31 @@ const EdgeInterp = (function () {
     const outDecl = ctx.decls[einsum.output_tensor];
     const outEmpty = outDecl ? outDecl.empty_value : null;
 
-    // Enumerate the iteration space.
+    // Enumerate the iteration space, each variable over its own rank.
     const points = [];
     const N = ctx.N;
+    const varRank = rankOfVars(einsum, ctx);
     const walk = (i, bind) => {
       if (i === iterVars.length) {
+        // A point may legitimately have no value -- that is what `absent`
+        // means, and evalNode says so by returning present:false. An
+        // EXCEPTION is a different thing: the spec asked for something this
+        // interpreter cannot do. Catching both and calling them absent is how
+        // an unknown operator used to become an empty tensor and a
+        // generation-cap timeout, with the operator's name never reaching the
+        // person who wrote it. So errors propagate, annotated with the point
+        // they happened at, because "unknown operator ge" is far more useful
+        // with "at u=0, v=3" attached.
         let r;
         try {
           r = evalNode(einsum.expression, bind, ctx, specs);
         } catch (err) {
-          r = { present: false, value: null, prov: { error: String(err) } };
+          const where = iterVars.map((v) => `${v}=${bind[v]}`).join(", ");
+          const e = new Error(
+            `${einsum.output_tensor}${opts.label ? " (" + opts.label + ")" : ""}` +
+            `, at ${where || "the single point"}: ${err.message || err}`);
+          e.cause = err;
+          throw e;
         }
         points.push({
           bind: Object.assign({}, bind),
@@ -371,8 +521,16 @@ const EdgeInterp = (function () {
         });
         return;
       }
-      for (let c = 0; c < N; c++) {
-        bind[iterVars[i]] = c;
+      const v = iterVars[i];
+      const bound = varRank[v] ? ctx.extentOfRank(varRank[v]) : N;
+      if (bound === undefined) {
+        throw new Error(
+          `rank variable "${v}" has no extent: it walks ` +
+          `${varRank[v] ? "rank " + varRank[v] : "no declared rank"}, and the ` +
+          `instance gives no extent for it`);
+      }
+      for (let c = 0; c < bound; c++) {
+        bind[v] = c;
         walk(i + 1, bind);
       }
     };
@@ -394,8 +552,15 @@ const EdgeInterp = (function () {
     let note = null;
 
     if (populateSpec) {
-      const choiceName =
+      // The CHOICE is the coordinate operator; the compute operator only
+      // says what value to write once a coordinate has been chosen. They are
+      // separate categories in edge_ir.udf -- (category, name) is the key --
+      // and keying on the compute op made every populate look like it was
+      // choosing by `identity`.
+      const coordName = (populateSpec.coord_op || {}).name;
+      const computeName =
         populateSpec.compute_op.name || populateSpec.compute_op.symbol;
+      const choiceName = coordName || computeName;
       // The populated ranks are the `*`-marked ones; the rest of the output
       // coordinate identifies the group a choice is made within. For
       // `PushCand_{i,u,v*}` that is: choose one v per u.
@@ -415,6 +580,7 @@ const EdgeInterp = (function () {
         // Driving: the choice is made now, by a named rule.
         Object.assign(result, opts.selector({
           name: choiceName,
+          coordName, computeName,
           label: opts.label,
           generation: opts.generation,
           candidates, popRanks, groupRanks, outRanks,
@@ -480,6 +646,7 @@ const EdgeInterp = (function () {
   return {
     evalEinsum,
     evalEinsumNode,
+    rankExprValue,
     merges,
     glyph,
     MERGE_TT,

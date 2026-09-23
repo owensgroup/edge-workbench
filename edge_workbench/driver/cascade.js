@@ -36,7 +36,12 @@ const { makeSelector, replaySelector } = require("./selectors.js");
  */
 function runCascade(program, instance, cascade, opts) {
   opts = opts || {};
-  const N = extentOf(instance);
+  const extents = instance.extent || {};
+  const N = Math.max(...Object.values(extents));
+  // Shape symbols a rank expression may read as a VALUE -- `|R|` in a depth
+  // stamp. Taken from the declared rank shapes and the instance's extents, so
+  // an algorithm does not have to state the same number twice.
+  const shapes = shapeEnv(program, extents, instance.scalars || {});
   const prog = withScalars(program, instance.scalars || {});
   const select = opts.selector || makeSelector(cascade.selectors || {});
   // Some tensors are written in the spec under one name and shown under
@@ -99,7 +104,8 @@ function runCascade(program, instance, cascade, opts) {
     let out = null;
     nodes.forEach((e) => {
       const R = EdgeInterp.evalEinsumNode(prog, e, state, {
-        N, selector: select, label, generation, tensorAlias: alias,
+        N, extents, shapes,
+        selector: select, label, generation, tensorAlias: alias,
       });
       const name = shown(R.output);
       if (!freshened.has(name)) { state[name] = {}; freshened.add(name); }
@@ -174,24 +180,24 @@ function snapshot(state) {
 }
 
 /**
- * The instance's extent. One number today because the viewer and the
- * interpreter both still assume a single N; when per-rank extents land this
- * is where they arrive, and `extent` is already a map so the instance format
- * does not have to change again.
+ * The value of each shape symbol a rank expression might read.
+ *
+ * A declaration says rank R has shape "|R|"; the instance says R has extent
+ * 4. So "|R|" is 4, and a depth stamp can write `depth * |R| + r` without the
+ * instance repeating the number under a second name. Explicit scalars win,
+ * for the case where a symbol is not any rank's shape.
  */
-function extentOf(instance) {
-  const e = instance.extent || {};
-  const vals = Object.values(e);
-  if (!vals.length) throw new Error("instance has no `extent`");
-  const first = vals[0];
-  if (vals.some((v) => v !== first)) {
-    throw new Error(
-      `ranks have different extents (${JSON.stringify(e)}) and the ` +
-        `interpreter still assumes one global N. Per-rank extents are the ` +
-        `next thing to build; until then this instance cannot be driven.`
-    );
-  }
-  return first;
+function shapeEnv(program, extents, scalars) {
+  const env = {};
+  (program.declarations || []).forEach((d) => {
+    (d.ranks || []).forEach((r) => {
+      if (r.shape && extents[r.name] !== undefined) {
+        env[r.shape] = extents[r.name];
+      }
+    });
+  });
+  Object.entries(scalars).forEach(([k, v]) => (env[k] = v));
+  return env;
 }
 
 /**

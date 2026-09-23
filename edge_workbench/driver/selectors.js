@@ -134,14 +134,21 @@ function makeSelector(mapping) {
   });
 
   return function select(req) {
-    const fn = fns[req.name];
+    // The coordinate operator is the choice; the compute operator is only
+    // what gets written once a coordinate is chosen. Accept a mapping on
+    // either name so a spec can be keyed the way its author thinks of it,
+    // but prefer the coordinate op, because that is the one that decides.
+    const fn = fns[req.coordName] || fns[req.computeName] || fns[req.name];
     if (!fn) {
       throw new UnknownSelector(
-        `the spec uses a choice function "${req.name}" that this run has no ` +
-          `rule for, so the cascade cannot be executed.\n` +
+        `the spec's populate names coordinate op ` +
+          `"${req.coordName || "(none)"}" and compute op ` +
+          `"${req.computeName || "(none)"}", and this run has a rule for ` +
+          `neither, so the cascade cannot be executed.\n` +
+          `  The coordinate op is the one that chooses; map that.\n` +`` +
           `  Map it in the algorithm's selectors block, e.g.\n` +
-          `      "${req.name}": {"rule": "seeded", "seed": 0}   (if free)\n` +
-          `      "${req.name}": "select-max-val"                 (if not)\n` +
+          `      "${req.coordName || req.name}": {"rule": "seeded", "seed": 0}   (if free)\n` +
+          `      "${req.coordName || req.name}": "select-max-val"                 (if not)\n` +
           `  Known rules: ${Object.keys(RULES).join(", ")}, seeded.\n` +
           `  Currently mapped: ${Object.keys(fns).join(", ") || "(none)"}\n` +
           `  Guessing is not an option here: for some algorithms the choice ` +

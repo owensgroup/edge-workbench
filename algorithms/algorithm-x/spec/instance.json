@@ -1,0 +1,42 @@
+{
+ "_comment": [
+  "Knuth's Algorithm X, Working Example 1 from the tutorial: 3 columns,",
+  "4 rows, two exact covers ({R2,R3} and {R0,R1,R3}).",
+  "",
+  "PROBE. This exists to find out what the tool does with a non-graph",
+  "algorithm whose ranks are different sizes. It is not a working spec."
+ ],
+ "extent": {
+  "R": 4,
+  "C": 3
+ },
+ "scalars": {
+  "RowCount": 4
+ },
+ "tensors": {
+  "A": {
+   "0,0": true,
+   "1,1": true,
+   "2,0": true,
+   "2,1": true,
+   "3,2": true
+  },
+  "Col": {
+   "0": true,
+   "1": true,
+   "2": true
+  },
+  "Row": {
+   "0": true,
+   "1": true,
+   "2": true,
+   "3": true
+  },
+  "S": {
+   "3": 7
+  }
+ },
+ "domain": {
+  "view": "matrix"
+ }
+}

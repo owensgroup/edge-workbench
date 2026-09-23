@@ -135,7 +135,7 @@ const S=R+"/algorithms/max-flow/spec";
 const cascade=rd(S+"/cascade.json");
 // Pin the free choice to the rule upstream registers, so the comparison is
 // about the evaluators and not about which admissible edge each one fancied.
-cascade.selectors={"pick-admissible-edge": process.env.EW_RULE};
+cascade.selectors={"select-one-admissible-v": process.env.EW_RULE};
 const r=runCascade(rd(S+"/max_flow_program.json"), rd(S+"/instance.json"),
                    cascade, {});
 const last=r.steps[r.steps.length-1];

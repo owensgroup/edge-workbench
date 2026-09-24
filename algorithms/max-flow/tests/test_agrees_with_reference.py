@@ -71,15 +71,39 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 ALG = Path(__file__).resolve().parents[1].name
 SPEC = ROOT / "algorithms" / ALG / "spec"
-UPSTREAM = Path(os.environ.get(
-    "EDGE_IR_REPO", str(Path.home() / "Projects/edge-ir-interpreter")))
+def _upstream() -> Path | None:
+    """Where the reference evaluator lives.
+
+    `edge-core-ir` is the public repo and is preferred; `edge-ir-interpreter`
+    is the private one and is the fallback, so a checkout of either works.
+    """
+    named = os.environ.get("EDGE_IR_REPO")
+    if named:
+        return Path(named)
+    for name in ("edge-core-ir", "edge-ir-interpreter"):
+        p = Path.home() / "Projects" / name
+        if (p / "edge_ir/evaluator/__init__.py").exists():
+            return p
+    return None
+
+
+UPSTREAM = _upstream() or Path("/nonexistent")
+
+
+def _algorithms_dir(root: Path) -> Path:
+    """The public repo calls it examples/algorithms; the private one
+    test-algorithms. Try both rather than pinning one."""
+    for rel in ("examples/algorithms", "test-algorithms"):
+        if (root / rel / "max-flow").is_dir():
+            return root / rel
+    raise FileNotFoundError(f"no max-flow example under {root}")
 
 
 def _require_upstream():
     if not (UPSTREAM / "edge_ir/evaluator/__init__.py").exists():
         pytest.skip(f"no reference evaluator at {UPSTREAM}")
     sys.path.insert(0, str(UPSTREAM))
-    sys.path.insert(0, str(UPSTREAM / "test-algorithms/max-flow"))
+    sys.path.insert(0, str(_algorithms_dir(UPSTREAM) / "max-flow"))
 
 
 def _instance():
@@ -258,7 +282,47 @@ def _r_differs_only_on_the_source_row(theirs, mine):
 KNOWN_DIVERGENCE = {"R": _r_differs_only_on_the_source_row}
 
 
+def test_upstream_ships_the_program_we_vendored():
+    """Comparing two evaluators over two DIFFERENT programs proves nothing.
+
+    The reference is driven from upstream's `build_max_flow_program.py`, not
+    from the JSON in this repo, so if upstream has moved -- or has not yet
+    caught up -- the two sides are running different algorithms and every
+    difference is meaningless. This is not hypothetical: the public repo
+    currently predates the E03/E13 rank reordering.
+    """
+    _require_upstream()
+    import json as _json
+    from build_max_flow_program import build_max_flow
+
+    theirs = _json.loads(build_max_flow().model_dump_json())
+    ours = _json.loads((SPEC / "max_flow_program.json").read_text())
+    if theirs == ours:
+        return
+    t = theirs["main_edge"]["cascade"]["einsums"]
+    o = ours["main_edge"]["cascade"]["einsums"]
+    where = next((i for i, (a, b) in enumerate(zip(t, o)) if a != b), None)
+    pytest.skip(
+        f"upstream at {UPSTREAM} ships a different program from the one "
+        f"vendored here (first cascade Einsum differing: index {where}, "
+        f"{o[where]['output_tensor'] if where is not None else '-'}). "
+        f"Comparing the evaluators would compare different algorithms. "
+        f"Re-vendor, or push the newer program upstream."
+    )
+
+
+def _programs_match() -> bool:
+    import json as _json
+    from build_max_flow_program import build_max_flow
+    return (_json.loads(build_max_flow().model_dump_json())
+            == _json.loads((SPEC / "max_flow_program.json").read_text()))
+
+
 def test_the_two_evaluators_agree_on_every_tensor():
+    _require_upstream()
+    if not _programs_match():
+        pytest.skip("upstream program differs from the vendored one; "
+                    "see test_upstream_ships_the_program_we_vendored")
     ref = _run_reference()
     ours = _run_ours()["state"]
 
@@ -332,6 +396,9 @@ def test_the_pinned_rule_is_the_one_upstream_registers():
 
 def test_both_reach_the_published_maximum_flow():
     """Agreeing on a wrong answer would still be agreeing."""
+    _require_upstream()
+    if not _programs_match():
+        pytest.skip("upstream program differs from the vendored one")
     ref = _run_reference()
     excess = _at_generation(ref, "E", True, ref.trace.generations)
     assert excess.get((5,), 0) == 23

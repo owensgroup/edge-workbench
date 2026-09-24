@@ -40,11 +40,12 @@ produces is what you see. Nothing is rendered from a recorded run.
 | ✅ | renderer, execution panel, 163-check regression suite |
 | ✅ | single-Einsum interpreter with per-point provenance |
 | ✅ | max-flow reproduces bit-for-bit in its new home |
-| ✅ | **cascade driver** — runs a whole spec; reproduces the 236-step hand-written trace |
+| ✅ | **cascade driver** — runs a whole spec; reproduces the hand-written trace step for step |
 | ✅ | selector registry (named choice functions with real semantics) |
 | ✅ | agreement with the upstream reference evaluator, state cell by cell |
 | ✅ | **the page is built from execution**, not from a recorded trace |
-| ⬜ | per-rank extents (today the viewer assumes one global `N`) |
+| ✅ | per-rank extents, `RankValue`, the loop derived from the generational rank |
+| ⬜ | a non-graph domain view, and the page's grids at non-square extents |
 | ⬜ | oracle registry, worked-example checker |
 | ⬜ | tutorial `.md` → IR |
 
@@ -55,8 +56,8 @@ initialization, run the body once per generation, test the stopping condition,
 repeat. The trace is now a product of the spec rather than something a person
 wrote, which is what makes the rest of the plan possible.
 
-**It is checked against the hand-written trace, step for step.** All 236 —
-same Einsum, same generation, same output tensor, same full state after it.
+**It is checked against the hand-written trace, step for step** — same
+Einsum, same generation, same output tensor, same full state after it.
 Free choices are replayed from the recording so that a legitimate difference
 in an unspecified choice cannot masquerade as agreement; a second mode then
 runs with a real rule and checks the answer still comes out. `--self-test`
@@ -84,7 +85,7 @@ being the source of the trace and became a second opinion. It caught
 `NeiLbl` inheriting the wrong empty value in the published spec. Max-flow is
 the only algorithm that will ever have one of these.
 
-**The reference evaluator** in `edge-ir-interpreter` is the one every
+**The reference evaluator** in `edge-core-ir` is the one every
 algorithm will have: an independent execution of the same IR, by the IR's
 author, in another language, with generation-indexed state rather than flat.
 `tests/test_agrees_with_reference.py` runs both over the same program and
@@ -115,11 +116,15 @@ the *second opinion*: the build compares its driven trace against them and
 refuses to write a page if they disagree. Three gates run before anything is
 written, and there is no flag to skip them.
 
-`edge-ir-interpreter` — which owns the IR and ships a reference evaluator — is
-a **private** repo, so nothing in the build path may touch it. A clean clone
-builds with `node` and nothing else. When that checkout *is* present, set
-`EDGE_IR_REPO` and `npm run agree` compares the two evaluators cell by cell;
-without it those tests skip rather than fail.
+The IR and its reference evaluator live in **`edge-core-ir`** (public) and
+`edge-ir-interpreter` (private, currently ahead). Nothing in the build path
+touches either: a clean clone builds with `node` and nothing else, because the
+IR is vendored. When a checkout is present, `npm run agree` compares the two
+evaluators cell by cell — and first checks that upstream ships the *same
+program* we vendored, because comparing two evaluators over two different
+programs proves nothing. Today the public repo predates the E03/E13 rank
+reordering, so that comparison skips with a message saying exactly which
+Einsum differs.
 
 `docs/PROVENANCE.md` has the full picture.
 

@@ -2,9 +2,18 @@
 //
 // Loads the page in jsdom and drives it the way a person would -- step, jump
 // iterations, hold the before toggle -- asserting that what the DOM shows
-// agrees with the trace. Catches the class of bug that only appears once the
-// data reaches the screen: wrong labels, stale grids, highlight logic that
-// fires when it should not.
+// agrees with THE DATA THE PAGE WAS BUILT WITH. Catches the class of bug that
+// only appears once the data reaches the screen: wrong labels, stale grids,
+// highlight logic that fires when it should not.
+//
+// The expected values come from the page's own embedded trace (`window.T`),
+// read back out of the loaded document -- not from a recorded fixture, of
+// which this repository has none. That is deliberate and it is not circular:
+// this file is the RENDERING check, and the question it answers is whether
+// the DOM faithfully shows the data it was given. Whether that data is
+// correct is a different question, answered before the page is written, by
+// the coverage gate (the whole spec executed) and the algorithm's own
+// verifier (the answer is right).
 //
 //   node check_viz.js            # summary
 //   node check_viz.js -v         # list every check
@@ -18,12 +27,8 @@ const { JSDOM, VirtualConsole } = require("jsdom");
 const ALG = process.env.EDGE_WORKBENCH_ALG || path.basename(
   path.join(__dirname, ".."));
 const ROOT = path.join(__dirname, "..", "..", "..");
-const HERE = path.join(ROOT, "algorithms", ALG, "fixtures");
 const BUILD = process.env.EDGE_WORKBENCH_OUT || path.join(ROOT, "build", ALG);
 const VERBOSE = process.argv.includes("-v");
-const trace = JSON.parse(
-  fs.readFileSync(path.join(HERE, "maxflow_edge_trace.json"), "utf8")
-);
 
 let pass = 0;
 const fails = [];
@@ -56,6 +61,23 @@ const dom = new JSDOM(html, {
 const { window } = dom;
 const doc = window.document;
 const $ = (id) => doc.getElementById(id);
+
+// The trace the page is rendering, read back OUT OF THE PAGE. Every expected
+// value below comes from here.
+//
+// Evaluated in the page's own global rather than read from `window.T`: the
+// page declares `const T=...` at script scope, and a top-level `const` goes
+// into the global lexical environment instead of becoming a property of
+// `window`. It is reachable by evaluating in that same global, which is what
+// this does.
+const trace = window.eval("typeof T !== 'undefined' ? T : null");
+if (!trace || !Array.isArray(trace.steps) || !trace.steps.length) {
+  console.error(
+    "the built page does not define a usable trace `T`, so there is nothing " +
+    "to check the DOM against. Did build_page.py rename the embedded trace?"
+  );
+  process.exit(1);
+}
 
 function textOf(el) {
   return el ? el.textContent.trim() : null;
@@ -1072,225 +1094,43 @@ function run() {
   );
   go(idx);
 
-  // ============================================================== compare
-  const seq = JSON.parse(
-    fs.readFileSync(path.join(HERE, "maxflow_seq_trace.json"), "utf8")
-  );
-  const scaling = JSON.parse(
-    fs.readFileSync(path.join(HERE, "scaling.json"), "utf8")
+  // ======================================================= no comparison
+  // Compare mode raced this cascade against a RECORDED trace of the textbook
+  // pseudocode. That recording is gone -- this repository has no fixtures --
+  // so there is nothing to race against and the page must say so by leaving
+  // the whole mode out, rather than shipping a dead control.
+  //
+  // The page always supported this: an algorithm declares a comparison or it
+  // does not, and max-flow now does not. These checks pin the absent case,
+  // because a half-built compare UI is worse than none.
+  check("no compare mode is offered", !$("mode-cmp"));
+  check("and no mode switcher is needed", !$("modes"));
+  check("no comparison panes", !$("cmp") && !$("gA") && !$("gB"));
+  check("no concurrency strip", !$("strip"));
+  check("no race transport", !$("tick") && !$("clast"));
+  check(
+    "and no sequential trace is embedded",
+    !/SEQT\s*=\s*\{/.test(html) && !/"variant"\s*:\s*"seq"/.test(html),
+    "a recorded trace reached the page"
   );
 
-  // The whole comparison is worthless if the two runs disagree on the answer.
-  check(
-    "both runs reach the same maximum flow",
-    seq.maxFlow === 23 && trace.maxFlow === 23,
-    "seq " + seq.maxFlow + " edge " + trace.maxFlow
-  );
-  check(
-    "the sequential trace is the pseudocode: one operation per round",
-    seq.rounds === seq.operations,
-    seq.rounds + " rounds for " + seq.operations + " operations"
-  );
-  // Kept as an offline artifact: the generator asserts both runs agree on
-  // the answer, so a measured row can never compare a wrong result.
-  check(
-    "the offline scaling measurement asserts equal flow at every size",
-    /same maximum flow/.test(scaling.note),
-    scaling.note
-  );
-
-  // The EDGE trace gets its header at build time, so read the embedded copy
-  // rather than the file on disk.
-  const eStart = html.indexOf("const T=") + 8;
-  const edge = JSON.parse(html.slice(eStart, html.indexOf(",DOM=", eStart)));
-  check(
-    "the EDGE trace carries the shared header",
-    edge.variant === "edge" && typeof edge.domainView === "string" &&
-      typeof edge.rounds === "number" && typeof edge.operations === "number",
-    JSON.stringify({v: edge.variant, d: edge.domainView,
-                    r: edge.rounds, o: edge.operations})
-  );
-  check(
-    "both traces name the same domain view",
-    edge.domainView === seq.domainView,
-    edge.domainView + " vs " + seq.domainView
-  );
-
-  // The mode switcher lives in the header, where it can say what the two
-  // modes are, rather than as an unexplained button in the transport bar.
-  check("mode switcher is in the header", !!$("modes") &&
-    !!doc.querySelector("header #modes"));
-  check("both modes are offered", !!$("mode-step") && !!$("mode-cmp"));
-  check(
-    "the switcher describes each mode",
-    ($("mode-step").textContent || "").length > 20 &&
-      ($("mode-cmp").textContent || "").length > 20,
-    $("mode-cmp").textContent
-  );
-  check(
-    "step mode is selected first, and explained",
-    $("mode-step").getAttribute("aria-pressed") === "true" &&
-      /before \/ after/.test($("modeinfo").textContent),
-    $("modeinfo").textContent.slice(0, 60)
-  );
-  check("no stray compare button in the transport bar", !$("cmpbtn"));
-
-  $("mode-cmp").onclick();
-  check("compare mode opens", doc.body.classList.contains("compare"));
-  check(
-    "and hides the single-run view",
-    !!$("cmp") && !!$("gA") && !!$("gB")
-  );
-  check(
-    "the modes swap their pressed state",
-    $("mode-cmp").getAttribute("aria-pressed") === "true" &&
-      $("mode-step").getAttribute("aria-pressed") === "false"
-  );
-  check(
-    "compare mode explains what is being compared",
-    /same algorithm/.test($("modeinfo").textContent) &&
-      /rounds, not seconds/.test($("modeinfo").textContent),
-    $("modeinfo").textContent.slice(0, 80)
-  );
-  // The bottom transport drives the single-run timeline and does nothing
-  // here, so it must be out of the way rather than sitting there inert.
-  check(
-    "the single-run transport bar is hidden while comparing",
-    /body\.compare #bar\{display:none\}/.test(html),
-    "expected a rule hiding #bar in compare mode"
-  );
-  check(
-    "both sides are labelled",
-    ($("labA").textContent || "").length > 3 &&
-      ($("labB").textContent || "").length > 3,
-    $("labA").textContent + " / " + $("labB").textContent
-  );
-
-  const cmpGo = window.cmpGo;
-  const txt = (id) => ($(id).textContent || "").replace(/\s+/g, " ");
-
-  // Rounds are the clock. At the tick where EDGE finishes, the sequential
-  // side must still be mid-run -- that IS the comparison.
-  cmpGo(edge.rounds);
-  check(
-    "EDGE finishes first",
-    /Finished in/.test(txt("capB")) && !/Finished in/.test(txt("capA")),
-    "edge: " + txt("capB").slice(0, 40) + " | seq: " + txt("capA").slice(0, 40)
-  );
-  check(
-    "the finished side is marked",
-    $("sideB").classList.contains("done") &&
-      !$("sideA").classList.contains("done")
-  );
-
-  cmpGo(seq.rounds);
-  check(
-    "both finish by the last tick",
-    /Finished in/.test(txt("capA")) && /Finished in/.test(txt("capB"))
-  );
-  check(
-    "final tallies show equal flow to the sink",
-    txt("tallyA").includes("23") && txt("tallyB").includes("23"),
-    txt("tallyA") + " || " + txt("tallyB")
-  );
-
-  // The honest claim: near-identical work, fewer rounds. If the operation
-  // counts ever diverge badly, the note would be making a false claim.
-  check(
-    "operation counts are within 15% of each other",
-    Math.abs(seq.operations - edge.operations) / edge.operations < 0.15,
-    "seq " + seq.operations + " vs edge " + edge.operations
-  );
-  // The framing lives in the header, once, rather than being repeated as a
-  // paragraph under the race -- and there is no hand-written narrative in
-  // compare mode for another algorithm to have to rewrite.
-  check(
-    "a tick is stated to be a round, in the header",
-    /rounds, not seconds/.test($("modeinfo").textContent),
-    txt("modeinfo").slice(-60)
-  );
-  check("no narrative paragraph under the race", !$("cmpnote"));
-
-  // A round happened all at once, so the graph must show everything it
-  // touched. Showing only the last step's highlight meant pushes never
-  // appeared at all -- the last step of a round marks relabelled vertices.
-  const litEdges = (g) =>
-    [...$(g).querySelectorAll("line")].filter(
-      (l) => l.getAttribute("stroke") === "#e8590c"
-    ).length;
-  const litNodes = (g) =>
-    [...$(g).querySelectorAll("circle")].filter(
-      (c) => c.getAttribute("stroke") === "#e8590c"
-    ).length;
-
-  check(
-    "the EDGE trace carries a per-round highlight",
-    !!edge.roundHighlights && Object.keys(edge.roundHighlights).length > 0
-  );
-
-  // Every round: highlighted edges must equal that round's pushes, and
-  // highlighted nodes its relabels -- the same numbers the caption states.
-  let hlOk = true, hlDetail = "";
-  for (let r = 1; r <= edge.rounds; r++) {
-    cmpGo(r);
-    let pushes = 0, relabels = 0;
-    edge.steps.forEach((st) => {
-      if (st.round !== r) return;
-      if (st.opKind === "push") pushes = st.concurrency || 0;
-      if (st.opKind === "relabel") relabels = st.concurrency || 0;
-    });
-    if (litEdges("gB") !== pushes || litNodes("gB") !== relabels) {
-      hlOk = false;
-      hlDetail = `round ${r}: lit ${litEdges("gB")}e/${litNodes("gB")}n, ` +
-        `expected ${pushes}e/${relabels}n`;
-      break;
-    }
-  }
-  check("every round highlights exactly what it did", hlOk, hlDetail);
-
-  // And the contrast is the whole point: a parallel round lights more than
-  // the single edge a sequential step can.
-  cmpGo(3);
-  check(
-    "a parallel round lights more edges than a sequential step",
-    litEdges("gB") > litEdges("gA"),
-    "edge " + litEdges("gB") + " vs seq " + litEdges("gA")
-  );
-
-  // Concurrency strip: one bar per EDGE round, and it must vary.
-  check(
-    "concurrency strip has one bar per EDGE round",
-    $("strip").children.length === edge.rounds,
-    $("strip").children.length + " bars for " + edge.rounds + " rounds"
-  );
-  check(
-    "bars vary in height, so parallelism is visibly uneven",
-    new Set([...$("strip").children].map((b) => b.style.height)).size > 1
-  );
-
-  // The scaling numbers are one-time measurement, not interactive state, so
-  // they live in gen_scaling.py / scaling.json and the README rather than on
-  // the page. Nothing here should be rendering them.
+  // The scaling numbers were a one-time offline measurement and are gone
+  // with the rest of the recorded data. Nothing should be rendering them.
   check("no scaling chart on the page", !$("chart"));
   check(
-    "and the scaling data is not inlined",
+    "and no scaling data is inlined",
     !/ratioHi/.test(html),
-    "scaling.json should not be embedded"
+    "scaling data should not be embedded"
   );
 
-  // Keyboard ownership while comparing.
-  const tickBefore = +$("tick").value;
+  // The single-run transport is the only mode now, so it must be present and
+  // driving the timeline -- there is no other consumer of the arrow keys.
+  const tickBefore = +$("slider").value;
   doc.onkeydown({ key: "ArrowLeft" });
   check(
-    "arrow keys drive the race, not the single-run timeline",
-    +$("tick").value === tickBefore - 1,
-    "tick " + $("tick").value
-  );
-  $("mode-step").onclick();
-  check("compare mode closes", !doc.body.classList.contains("compare"));
-  check(
-    "and the transport bar is available again",
-    $("mode-step").getAttribute("aria-pressed") === "true"
+    "arrow keys drive the single-run timeline",
+    +$("slider").value === tickBefore - 1,
+    "slider " + $("slider").value
   );
 
   // ------------------------------------------------------------- console

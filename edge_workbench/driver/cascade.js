@@ -99,10 +99,21 @@ function runCascade(program, instance, cascade, opts) {
    * into it. Clearing happens AFTER evaluating, because an Einsum may read the
    * tensor it writes (E12 reads F_i to produce F_{i+1}).
    */
-  const runNodes = (nodes, label, generation, record) => {
+  // IR node key -> how many times it ran. Keys are the node's position in
+  // the program: `init:k` for initialization, the bare index for a cascade
+  // node. This is what `edge_workbench/coverage.py` checks the spec against.
+  const executed = {};
+
+  const runNodes = (nodes, label, generation, record, ids) => {
     const freshened = new Set();
     let out = null;
-    nodes.forEach((e) => {
+    nodes.forEach((e, k) => {
+      // Tally the IR NODE, not the emitted step. The two differ on purpose:
+      // initialization runs four Einsums and emits one step, and a lowered
+      // `cases` runs three and emits one. Counting steps would report those
+      // as covered when three quarters of the nodes could be missing, which
+      // is exactly the blind spot the coverage gate exists to close.
+      if (ids) executed[ids[k]] = (executed[ids[k]] || 0) + 1;
       const R = EdgeInterp.evalEinsumNode(prog, e, state, {
         N, extents, shapes,
         selector: select, label, generation, tensorAlias: alias,
@@ -123,14 +134,18 @@ function runCascade(program, instance, cascade, opts) {
     return out;
   };
 
-  const runLabel = (label, idx, generation) =>
-    runNodes((Array.isArray(idx) ? idx : [idx])
-      .map((i) => prog.main_edge.cascade.einsums[i]), label, generation);
+  const runLabel = (label, idx, generation) => {
+    const ids = Array.isArray(idx) ? idx : [idx];
+    return runNodes(ids.map((i) => prog.main_edge.cascade.einsums[i]),
+                    label, generation, undefined, ids);
+  };
 
   // ---- initialization ---------------------------------------------------
   // Several Einsums, one step: the reader wrote "here is the starting state",
   // not four separate moves.
-  runNodes(prog.initialization.einsums || [], cascade.initLabel || "init", null);
+  const initNodes = prog.initialization.einsums || [];
+  runNodes(initNodes, cascade.initLabel || "init", null, undefined,
+           initNodes.map((_, k) => `init:${k}`));
 
   // ---- which Einsums are the loop, and which run once -------------------
   const { setup, body } = splitCascade(prog, cascade);
@@ -161,7 +176,7 @@ function runCascade(program, instance, cascade, opts) {
     );
   }
 
-  return { generations: gen - 1, steps };
+  return { generations: gen - 1, steps, executed };
 }
 
 // --------------------------------------------------------------- pieces ---

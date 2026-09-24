@@ -74,6 +74,26 @@ const RULES = {};
   });
 });
 
+/* `select-any` -- the unranked member of the family, now in upstream's
+   registry. It is the operator a spec should name when the choice is
+   genuinely free, instead of borrowing a ranking rule and thereby claiming a
+   tie-break the algorithm does not have.
+
+   NOTE THE SPLIT, because it is the whole point of the operator. Upstream's
+   `select_any` contains no randomness at all: it keeps the first arrival, and
+   the FREEDOM lives in the order `Schedule` hands Populate its elements
+   (`SequentialSchedule` reproducible, `ShuffledSchedule(seed)` sampling). We
+   have no schedule -- this driver visits points in one fixed order -- so the
+   same freedom has to enter somewhere, and here that place is the seeded
+   rule below.
+
+   So `select-any` is deliberately NOT in RULES: mapping it to a deterministic
+   rule would silently pick one legal execution and call it the algorithm.
+   cascade.json must map it, and `{"rule": "seeded", "seed": N}` is the
+   honest mapping. `makeSelector` already refuses an unmapped name, which is
+   what makes that a requirement rather than a suggestion. */
+const FREE_BY_CONSTRUCTION = new Set(["select-any", "select_any", "any-1"]);
+
 /** Compare two candidates by their populated coordinates, numerically. */
 function cmpCoord(a, b) {
   const x = a.populatedCoord;
@@ -122,6 +142,17 @@ function makeSelector(mapping) {
     if (typeof spec === "object" && spec && spec.rule === "seeded") {
       fns[name] = seededRule(spec.seed | 0);
       return;
+    }
+    if (FREE_BY_CONSTRUCTION.has(spec)) {
+      throw new UnknownSelector(
+        `"${spec}" cannot be used as a rule for selector "${name}". It is ` +
+          `upstream's operator for a choice that is FREE -- it ranks ` +
+          `nothing, and picks whichever candidate the schedule happens to ` +
+          `offer first. Binding it to a fixed rule here would pick one legal ` +
+          `execution and present it as the algorithm.\n` +
+          `  Map it to a seed instead:\n` +
+          `      "${name}": {"rule": "seeded", "seed": 0}`
+      );
     }
     const rule = RULES[spec];
     if (!rule) {

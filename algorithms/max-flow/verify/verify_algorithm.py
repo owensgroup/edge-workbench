@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """Is the max-flow cascade actually correct?
 
-Everything that currently agrees on the answer 23 is push-relabel:
-`eval_edge.py`, `edge_interp.js` and `seq_pushrelabel.py`. Three
-implementations of one algorithm can share a misconception, and until now
-nothing checked that the flow they produce is even a *valid* flow -- only that
-its value came out 23.
+There is now exactly one implementation in this repository: the
+specification, executed by the driver. That makes this file the only thing
+standing between a wrong cascade and a published page, so it must not check
+that the answer came out 23 -- a single implementation can be confidently
+wrong, and agreeing with itself proves nothing.
 
 This closes both gaps:
 

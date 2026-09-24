@@ -8,10 +8,10 @@ honest, the build shells out to the same one.
 
     trace = run()          # or run("some-algorithm")
 
-Requires `node` and nothing else. That matters: `edge-ir-interpreter` is a
-private repo, so nothing a stranger needs in order to `git clone && npm run
-build` may live there. The reference evaluator is a verification step, not a
-build step.
+Requires `node` and nothing else. That matters: `edge-core-ir` is a separate
+checkout, so nothing a stranger needs in order to `git clone && npm run build`
+may live there. The IR is vendored; the reference evaluator is a verification
+step, not a build step.
 """
 
 from __future__ import annotations
@@ -46,7 +46,10 @@ class DriverError(RuntimeError):
 
 def run(algorithm: str | None = None, *, program: str | None = None,
         selectors: dict | None = None) -> dict:
-    """Execute the cascade and return {generations, steps}.
+    """Execute the cascade and return {generations, steps, executed}.
+
+    `executed` is the IR-node coverage tally -- node key to run count --
+    which `edge_workbench.coverage` checks against the specification.
 
     `selectors` overrides the algorithm's own mapping -- used by tests that
     need to pin a free choice, never by the build.
@@ -80,19 +83,21 @@ def run(algorithm: str | None = None, *, program: str | None = None,
 def _program_file(spec: Path) -> Path:
     """The IR program in an algorithm's spec directory.
 
-    Found rather than named, so an algorithm does not have to call its program
-    a particular name; exactly one is required, because two would make the
-    choice silent.
+    Matched by the `*_program.json` convention rather than by excluding the
+    files we happen to know about. The denylist version of this ("any .json
+    that is not cascade.json or instance.json") treated every new file in
+    spec/ as a candidate program, so adding `known_ir_violations.json`
+    silently broke three tools at once. A spec directory is going to
+    accumulate files; the program is the one that says it is the program.
+
+    Exactly one is required, because two would make the choice silent.
     """
-    candidates = sorted(
-        p for p in spec.glob("*.json")
-        if p.name not in {"cascade.json", "instance.json"}
-    )
+    candidates = sorted(spec.glob("*_program.json"))
     if len(candidates) != 1:
         raise DriverError(
-            f"expected exactly one IR program in {spec}, found "
-            f"{[p.name for p in candidates]}. cascade.json and instance.json "
-            f"are the algorithm's own files; anything else is taken to be the "
-            f"program."
+            f"expected exactly one *_program.json in {spec}, found "
+            f"{[p.name for p in candidates]}. The IR program is identified by "
+            f"the `_program.json` suffix; other files in spec/ are the "
+            f"algorithm's own."
         )
     return candidates[0]

@@ -1,0 +1,38 @@
+{
+ "_comment": [
+  "Layer 2 findings this algorithm is KNOWN to have, pinned to their exact",
+  "shape rather than skipped.",
+  "",
+  "A validator finding that is merely tolerated becomes invisible: the run",
+  "goes green, nobody reads the list, and a genuinely new violation arrives",
+  "among the old ones without anyone noticing. So the baseline is asserted",
+  "in both directions -- a new violating tensor fails, and so does a",
+  "violation that has been FIXED, because then this file is stale and should",
+  "shrink. Upstream's own test_validator_single_assignment.py pins",
+  "max-flow the same way.",
+  "",
+  "An algorithm with no such file must come out clean. That is the default,",
+  "and it is what upstream's bfs, dfs, bellman-ford and label-propagation do."
+ ],
+ "singleAssignment": {
+  "tensors": ["Act", "D", "E", "F", "R"],
+  "why": [
+   "Three of the five are workarounds for IR features that do not exist yet,",
+   "not mistakes in the algorithm:",
+   "",
+   "  F, E, R, D -- initialization runs INSIDE the cascade, writing a literal",
+   "    generation 1 that the loop then writes again at i+1. The validator",
+   "    reports it because an iterative rank passes through the constant.",
+   "",
+   "  R -- E04 is a three-arm `cases`, and a lowered `cases` is three IR nodes",
+   "    writing the same slice in order, each overwriting the last. That",
+   "    ordering is what makes the u=s arm win. A later arm computing its",
+   "    output's empty value cannot clear what an earlier arm wrote.",
+   "",
+   "  Act -- written once by the push step and once by the relabel step.",
+   "",
+   "Fixing the cascade should shrink this list, and this file should shrink",
+   "with it."
+  ]
+ }
+}

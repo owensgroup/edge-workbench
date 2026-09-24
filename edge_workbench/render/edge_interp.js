@@ -54,7 +54,7 @@ const EdgeInterp = (function () {
   // -------------------------------------------------------------- computes
   // Compute operators. `+ - * /` are IR builtins; the rest arrive as
   // user-defined names, which is why their bodies have to live somewhere --
-  // the IR records only the name. These match eval_edge.py.
+  // the IR records only the name, so the bodies have to live somewhere.
   const COMPUTE = {
     "+": (a, b) => a + b,
     "-": (a, b) => a - b,
@@ -69,17 +69,25 @@ const EdgeInterp = (function () {
     ge: (a, b) => a >= b,
     lt: (a, b) => a < b,
     le: (a, b) => a <= b,
-    // Integer division, rounding toward negative infinity, which is what a
-    // depth stamp's floor(F / |R|) means.
-    floordiv: (a, b) => Math.floor(a / b),
     /* ANY: one of the contributions, where "one of" only means anything
        among the NON-empty ones. Under a union merge a reduction is invoked
        at points where the left operand is absent and handed the empty value,
        and returning that would discard everything accumulated so far -- so an
        empty operand is skipped. When both are present either is a legal
        answer and the incumbent is kept, which makes the choice deterministic.
-       Semantics taken from edge_ir/udf/builtins.py rather than invented. */
-    any_of: (a, b, lp, rp) => (rp === false ? a : (lp === false ? b : a)),
+
+       The name is upstream's REGISTRY name, not its Python function name.
+       `edge_ir/udf/builtins.py` defines `def any_of(...)` but registers it as
+       `ANY`, and the registry name is what a program carries -- so keying
+       this table on `any_of` meant a spec written against upstream resolved
+       `AND` and `OR` and then failed on `ANY`. `any_of` stays as an alias so
+       anything already written against the function name keeps working.
+
+       One subtlety worth stating: upstream skips an operand by testing it
+       against the tensor's empty VALUE; this tests the presence flag. Those
+       agree only because `value == empty => absent` holds everywhere here.
+       If that ever stops holding, this is one of the places that breaks. */
+    ANY: (a, b, lp, rp) => (rp === false ? a : (lp === false ? b : a)),
     AND: (a, b) => Boolean(a) && Boolean(b),
     OR: (a, b) => Boolean(a) || Boolean(b),
     take_left: (a) => a,
@@ -90,12 +98,38 @@ const EdgeInterp = (function () {
     // pattern rejects "<<".
     update: (a, b, lp, rp) => (rp ? b : a),
   };
+  COMPUTE.any_of = COMPUTE.ANY;       // upstream's function name
+
+  /* Unary operators, keyed as the IR spells them: `not` is a BuiltinUnaryOp
+     carrying a `symbol`, everything else is a UserDefinedUnaryOp carrying a
+     `name` and living in upstream's UNARY registry category.
+
+     `mapsEmptyToEmpty` mirrors the flag on upstream's registry declaration,
+     and it is load-bearing rather than descriptive: it picks the merge of the
+     degenerate Map the unary sugars into, and so decides whether the operator
+     is evaluated at points where its operand is absent. */
+  const UNARY = {
+    // Maps empty to NON-empty: an absent Boolean is false, so its negation is
+    // true and present. Derives `not_left`.
+    not: { fn: (v, present) => !(present && v), mapsEmptyToEmpty: false },
+    // Maps empty to empty: floor fixes every integer, so it cannot manufacture
+    // a value where the operand had none. Derives `take_left`.
+    //
+    // Needed by stamped-stack backtracking: Algorithm X packs a depth and a
+    // row into sigma(d, r) = d*|R| + r, and the depth comes back out as
+    // `floor(F / |R|)`. Note that is a unary over a BUILTIN division, not a
+    // fused integer division -- and since the grammar restricts a unary's
+    // operand to an input tensor, the tutorial's one written line lowers to
+    // two Einsums: name the quotient, then floor it.
+    floor: { fn: (v) => Math.floor(v), mapsEmptyToEmpty: true },
+  };
+
+  const UNARY_GLYPH = { not: "¬", floor: "⌊ ⌋" };
 
   const COMPUTE_GLYPH = {
     "*": "×", eq: "≡", ne: "≠", gt: ">", ge: "≥", lt: "<", le: "≤",
-    floordiv: "⌊/⌋", any_of: "ANY",
     take_left: "←", take_right: "→", update: "<<",
-    min: "min", max: "max", AND: "AND", OR: "OR",
+    min: "min", max: "max", AND: "AND", OR: "OR", ANY: "ANY", any_of: "ANY",
   };
 
   function glyph(name, kind) {
@@ -107,7 +141,7 @@ const EdgeInterp = (function () {
   // A value equal to a tensor's declared empty value is ABSENT. This rule is
   // load-bearing -- it is why a saturated residual edge (R = 0) drops out of
   // E07's intersect with no positivity guard -- and it is NOT recorded
-  // anywhere in the IR. Hardcoded here, same as in eval_edge.py.
+  // anywhere in the IR, so it is hardcoded here.
   function num(v) {
     if (v === "inf") return Infinity;
     if (v === "-inf") return -Infinity;
@@ -339,18 +373,28 @@ const EdgeInterp = (function () {
 
     if (node.kind === "unary") {
       const inner = evalNode(node.operand, bind, ctx, specs);
-      // `not` over presence-carrying Booleans: an absent Boolean is false,
-      // so its negation is true and present.
-      const v = !(inner.present && inner.value);
+      const name = node.op && (node.op.symbol || node.op.name);
+      const unary = UNARY[name];
+      if (!unary) {
+        throw new Error(
+          `unknown unary operator: ${name || "(none)"}. Known: ` +
+            Object.keys(UNARY).join(", ")
+        );
+      }
+      // Presence is the operator's to decide, and EDGE is explicit that it
+      // differs per operator: one that maps empty to EMPTY sugars into a
+      // `take_left` Map and visits only the operand's present points, while
+      // one that maps empty to NON-empty (`not` is the paper's own example)
+      // uses `not_left` and must be evaluated where the operand is absent.
+      // Reading `not`'s behaviour onto every unary -- which this did until
+      // `floor` arrived -- makes floor(absent) present, and a stamped-stack
+      // depth would materialise at coordinates holding no stamp.
+      const present = unary.mapsEmptyToEmpty ? inner.present : true;
+      const v = present ? unary.fn(inner.value, inner.present) : null;
       return {
-        present: true,
+        present,
         value: v,
-        prov: {
-          op: "not",
-          inner: inner.prov,
-          present: true,
-          value: v,
-        },
+        prov: { op: name, inner: inner.prov, present, value: v },
       };
     }
 
@@ -652,6 +696,7 @@ const EdgeInterp = (function () {
     MERGE_TT,
     MERGE_GLYPH,
     COMPUTE,
+    UNARY,
     isEmpty,
     num,
   };

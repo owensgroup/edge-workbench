@@ -1,20 +1,10 @@
 """The builder refuses to write a page it has not verified.
 
-This replaces `test_move_is_faithful.py`, which diffed the generated page
-against the copy GraphEinsums still produces. That test had a stated
-retirement condition -- "delete it once the two legitimately diverge" -- and
-2026-09-22 is when they did: upstream's IR gained `AdmPost`, so E17 writes a
-tensor of its own rather than a second generation of `Adm`. GraphEinsums is
-pinned to the older spec as research content, and the pages are now different
-on purpose.
-
-What the move test was really guarding is now guarded better, and by things
-that keep working as the spec moves:
-
-  tests/drive_and_compare.js   the driven trace against the hand-written one,
-                               all 236 steps, plus a fault self-test
-  tests/verify_interp.js       the interpreter replayed against that trace
-  tests/check_page.js          163 checks on the rendered page
+Two gates run inside build_page.py before index.html is written, and there is
+no flag to skip them: coverage (every Einsum the author wrote executed) and
+the algorithm's own answer check. This file guards the things around them --
+that an unknown algorithm builds nothing, and that the vendored IR still
+matches what upstream ships.
 """
 
 from __future__ import annotations
@@ -48,11 +38,18 @@ def test_the_vendored_ir_is_the_one_upstream_ships():
     import json
     import pytest
 
-    upstream = Path(os.environ.get(
-        "EDGE_IR_REPO", str(Path.home() / "Projects/edge-ir-interpreter")
-    )) / "test-algorithms/max-flow/max_flow_program.json"
-    if not upstream.exists():
-        pytest.skip(f"upstream checkout not present at {upstream}")
+    root = Path(os.environ.get(
+        "EDGE_IR_REPO", str(Path.home() / "Projects/edge-core-ir")
+    ))
+    # `examples/algorithms` is upstream's layout; `test-algorithms` is what an
+    # older checkout pointed at by EDGE_IR_REPO calls the same directory.
+    upstream = next(
+        (p for rel in ("examples/algorithms", "test-algorithms")
+         if (p := root / rel / "max-flow/max_flow_program.json").exists()),
+        None,
+    )
+    if upstream is None:
+        pytest.skip(f"upstream checkout not present at {root}")
     ours = ROOT / "algorithms/max-flow/spec/max_flow_program.json"
     assert json.loads(ours.read_text()) == json.loads(upstream.read_text()), (
         "the vendored IR differs from upstream's. If upstream moved, re-vendor "

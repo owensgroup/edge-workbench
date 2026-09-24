@@ -5,7 +5,7 @@ neighbours with `os.path.join(HERE, ...)`. That is fine for one algorithm and
 impossible for many, so the flat lookups are replaced by exactly two ideas:
 
     TOOL          files that belong to the workbench    (edge_interp.js, ...)
-    algorithm()   files that belong to one algorithm    (spec/, fixtures/)
+    algorithm()   files that belong to one algorithm    (spec/, tests/)
 
 Nothing else about the lifted code changed in the move. The move is proven by
 generating max-flow's page here and diffing it against the page GraphEinsums
@@ -58,7 +58,7 @@ def default() -> str:
 
 
 def algorithm(name: str | None = None) -> Path:
-    """The directory holding one algorithm's spec and fixtures."""
+    """The directory holding one algorithm's spec, verifier and tests."""
     override = os.environ.get(ENV_ALG_DIR)
     if override:
         return Path(override).resolve()
@@ -74,5 +74,3 @@ def spec(name: str | None = None) -> Path:
     return algorithm(name) / "spec"
 
 
-def fixtures(name: str | None = None) -> Path:
-    return algorithm(name) / "fixtures"

@@ -5,15 +5,23 @@ import json, re, os, shutil, subprocess, sys
 # over the instance and returns a trace; `annotate` adds the LaTeX, captions
 # and highlights that make it readable; this file renders it.
 #
-# Nothing here reads a recorded trace. That matters more than it sounds: while
-# the page came from a hand-written implementation of push-relabel, "the
-# visualisation shows what the spec does" was an article of faith. Now the
-# only way to change what the page shows is to change the spec, the instance,
-# or the presentation -- and the first two are checked against a second
-# implementation before the page is written.
+# THERE IS NO RECORDED TRACE ANYWHERE IN THIS REPOSITORY. Not as an input, not
+# as a fixture, not as something to check against. A recorded trace can only
+# answer "does this run match a run someone did before", which stops being a
+# useful question the moment the spec is the thing under review -- and it
+# quietly makes the recording the authority instead of the specification.
 #
-# The recorded trace still exists, in fixtures/, as the thing the driver is
-# compared against. It is a test fixture, not an input.
+# Two gates run before anything is written, and there is no flag to skip them:
+#
+#   coverage   every Einsum the author wrote executed, and every IR node is
+#              claimed by something they wrote. Catches the silent failure --
+#              an Einsum that never runs raises nothing and leaves a page that
+#              looks complete.
+#   answer     the algorithm's own verifier recomputes the result from the
+#              driven run and checks it against what is independently known
+#              to be true.
+#
+# Between them: the spec ran in full, and what it produced is right.
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
 from edge_workbench import paths                       # noqa: E402
@@ -21,7 +29,6 @@ from edge_workbench import paths                       # noqa: E402
 ALG = os.environ.get("EDGE_WORKBENCH_ALG") or paths.default()
 HERE = str(paths.RENDER)                 # tool files: edge_interp.js
 SPEC = str(paths.spec(ALG))              # IR program, display metadata
-FIX = str(paths.fixtures(ALG))           # traces, scaling data
 OUT = os.environ.get("EDGE_WORKBENCH_OUT", os.path.join(str(paths.ROOT), "build", ALG))
 VERIFY = str(paths.TOOL / "verify")
 TESTS = str(paths.TESTS)
@@ -37,46 +44,43 @@ except ModuleNotFoundError:
 
 from edge_workbench.driver import run as driver          # noqa: E402
 from edge_workbench.render import annotate as ann        # noqa: E402
+from edge_workbench import coverage                      # noqa: E402
 
-def verify_interpreter():
-    """Replay the JS einsum interpreter against the reference trace.
+def verify_coverage(program, cascade, executed):
+    """Every Einsum the author wrote must have run.
 
-    The interpreter recomputes one einsum from its operands; the trace already
-    records what that einsum produced. Diffing the two catches wrong merge
-    tables, transposed operands and empty-value mistakes before anything is
-    written -- and certainly before anything is copied to the website.
+    This is the gate that replaced comparing against a recorded trace, and it
+    asks a question the recording never could: not "does this match what
+    happened before" but "did the specification in front of me execute".
 
-    Skipped with a warning if node is unavailable, so the build still works
-    without it; failing loudly is only possible when the check can run.
+    The failure it catches is silent. An Einsum that never runs produces no
+    wrong value and raises nothing; it just leaves a page whose step list
+    looks complete. Nothing else in the build would notice.
+
+    It works off the driver's own per-IR-node tally rather than the emitted
+    steps, because the two differ on purpose: initialization runs four
+    Einsums and emits one step, a lowered `cases` runs three and emits one.
     """
-    if shutil.which("node") is None:
-        print("!! node not found -- interpreter check SKIPPED", file=sys.stderr)
-        return
-    r=subprocess.run(["node", os.path.join(TESTS,"verify_interp.js")],
-                     capture_output=True, text=True, cwd=TESTS)
-    sys.stdout.write(r.stdout)
-    if r.returncode!=0:
-        sys.stderr.write(r.stderr)
-        sys.exit("\nBUILD ABORTED: the interpreter disagrees with the trace.\n"
-                 "Run `node verify_interp.js -v` for the full diff.\n"
-                 "index.html was NOT written.")
+    cov = coverage.measure(program, cascade, executed)
+    print("coverage      :", cov.summary())
+    if not cov.ok:
+        sys.exit("\nBUILD ABORTED: the specification did not fully execute.\n"
+                 + cov.report() + "\nindex.html was NOT written.")
+    return cov
+
 
 def verify_algorithm():
     """Run the algorithm's own verifier, if it has one.
 
-    The interpreter and driver checks prove the evaluators agree with each
-    other. This is the different question: is what they agree ON right? Only
-    the algorithm can answer that -- it needs an independent implementation
-    of the same problem -- so the verifier lives with the algorithm, in
-    `algorithms/<alg>/verify/`, and the tool only knows how to run it.
+    Coverage proves the spec ran. This is the other question: is what it
+    produced right? Only the algorithm can answer that, so the verifier lives
+    with the algorithm in `algorithms/<alg>/verify/` and the tool only knows
+    how to run it.
 
     Optional, because an algorithm nobody has written a verifier for should
     still render. The skip is loud: a page whose answer nothing checked is
-    worth less than one whose answer something did, and the reader of the
+    worth less than one whose answer something did, and whoever reads the
     build log should be able to tell which they have.
-
-    Trials are kept low here; run the verifier directly for a proper sweep,
-    and with --self-test to confirm it can still fail.
     """
     verifier=os.path.join(paths.algorithm(ALG),"verify","verify_algorithm.py")
     if not os.path.exists(verifier):
@@ -86,44 +90,27 @@ def verify_algorithm():
                      capture_output=True, text=True,
                      cwd=os.path.dirname(verifier))
     tail=[l for l in r.stdout.strip().splitlines() if l.strip()]
-    print("algorithm check:", tail[-1].strip() if tail else "(no output)")
+    print("answer check  :", tail[-1].strip() if tail else "(no output)")
     if r.returncode!=0:
         sys.stdout.write(r.stdout); sys.stderr.write(r.stderr)
         sys.exit(f"\nBUILD ABORTED: {ALG} failed its own verifier.\n"
                  f"Run {verifier} directly for detail.\n"
                  f"index.html was NOT written.")
 
-def verify_driver():
-    """The driven trace must agree with the independent implementation.
 
-    This is the gate that matters now that the page is built by executing the
-    spec. Without it, a wrong spec would produce a self-consistent wrong page
-    and the only thing standing between that and the website would be
-    somebody noticing.
-
-    Skipped with a warning if node is unavailable, like the others -- though
-    in that case the driver could not have run either.
-    """
-    if shutil.which("node") is None:
-        print("!! node not found -- driver check SKIPPED", file=sys.stderr)
-        return
-    r=subprocess.run(["node", os.path.join(TESTS,"drive_and_compare.js")],
-                     capture_output=True, text=True, cwd=TESTS)
-    tail=(r.stdout.strip().splitlines() or ["(no output)"])[-1]
-    print("driver check  :", tail)
-    if r.returncode!=0:
-        sys.exit("\nBUILD ABORTED: the driven trace disagrees with the "
-                 "independent implementation.\n"+r.stdout[-2000:])
-
-verify_interpreter()
-verify_algorithm()
-verify_driver()
 
 # ---- the trace, produced by running the spec -----------------------------
 INSTANCE=json.load(open(os.path.join(SPEC,"instance.json")))
 CASCADE=json.load(open(os.path.join(SPEC,"cascade.json")))
 ALIAS=CASCADE.get("displayNames",{})
 _run=driver.run(ALG)
+
+# Both gates, on this run's own output. Coverage first: if the spec did not
+# fully execute, whether the answer happens to be right is beside the point.
+IR_PROGRAM=json.load(open(driver._program_file(paths.spec(ALG))))
+verify_coverage(IR_PROGRAM, CASCADE, _run["executed"])
+verify_algorithm()
+
 T=ann.annotate({"steps":_run["steps"]}, meta, view)
 T["iterations"]=_run["generations"]
 T["graph"]=(view.graph(INSTANCE) if view and hasattr(view,"graph")
@@ -137,7 +124,7 @@ print(f"driven trace  : {len(T['steps'])} steps, "
       + (f", {T['headline']['label']} {T['headline']['value']}"
          if "headline" in T else ""))
 # The IR program and the interpreter get inlined verbatim so the page stays a
-# single self-contained file. The same edge_interp.js drives verify_interp.js,
+# single self-contained file. The same edge_interp.js drives the cascade,
 # so what the modal shows is exactly what the oracle checked.
 IR=json.load(open(driver._program_file(paths.spec(ALG))))
 INTERP=open(os.path.join(HERE,"edge_interp.js"),encoding="utf-8").read()
@@ -148,49 +135,23 @@ INTERP=open(os.path.join(HERE,"edge_interp.js"),encoding="utf-8").read()
 # recompute the Einsum the reader is looking at.
 EINSUM_IDX=CASCADE.get("labels",{})
 
-# Compare mode races this cascade against another trace -- the textbook
-# pseudocode, for max-flow. An algorithm with nothing to race against says so
-# by not declaring one, and the control hides itself.
-_cmp=CASCADE.get("compare",{}).get("trace")
-SEQ=json.load(open(os.path.join(FIX,_cmp))) if _cmp else None
 
-def annotate_edge_trace(T):
-    """Give the EDGE trace the same header the sequential one already carries.
+def trace_header(T):
+    """Name the renderer this trace wants, and nothing else.
 
-    Compare mode reads only the header plus each step's `round` and `opKind`,
-    so it stays algorithm-agnostic: another algorithm's pair of traces drops in
-    without the comparison code learning anything about push-relabel.
+    This used to carry a whole compare-mode header -- variant, rounds,
+    operation counts, per-step `round` and `opKind` -- so two traces could be
+    raced against each other. Nothing races any more, and every one of those
+    fields was dead: the page reads exactly one thing from here.
 
-    A "round" here is one iteration of the cascade -- the unit of bulk-
-    synchronous progress. In the sequential trace a round is one operation.
-    That is the whole comparison: the same work, differently many rounds.
+    `domainView` is that thing, and it is what keeps the viewer
+    algorithm-agnostic. A trace names its renderer; a matrix view for a
+    non-graph algorithm is a new entry in DOMAIN_VIEWS rather than surgery on
+    the viewer.
     """
-    # What counts as an "operation" is the one thing here that is about the
-    # algorithm, so it comes from the view module. An algorithm with no view
-    # module gets a trace with no operations, which compare mode reads as
-    # "nothing to race" rather than as an error.
-    counts={}
-    for s in T["steps"]:
-        s["round"]=s.get("iteration")
-        kind,n=(view.operations(s) if view and hasattr(view,"operations")
-                else (None,0))
-        s["opKind"]=kind
-        if kind:
-            s["concurrency"]=n
-            counts[kind]=counts.get(kind,0)+n
-    T["roundHighlights"]=(view.rounds(T) if view and hasattr(view,"rounds")
-                          else {})
-
-    rounds=max((s["round"] or 0) for s in T["steps"])
-    T.update({
-        "algorithm":ALG,"variant":"edge",
-        "label":"EDGE — the cascade",
-        "sublabel":"every active vertex acts in the same round",
-        "domainView":(view.DOMAIN_VIEW if view and hasattr(view,"DOMAIN_VIEW")
-                      else INSTANCE.get("domain",{}).get("view")),
-        "rounds":rounds,"operations":sum(counts.values()),
-        "opCounts":counts,
-    })
+    T["algorithm"] = ALG
+    T["domainView"] = (view.DOMAIN_VIEW if view and hasattr(view, "DOMAIN_VIEW")
+                       else INSTANCE.get("domain", {}).get("view"))
     return T
 
 RANKS={n:len(r) for n,r in meta.RANKNAMES.items()}
@@ -254,20 +215,7 @@ HTML = r"""<!doctype html><html><head><meta charset="utf-8"><title>PAGETITLE</ti
 .crumb{margin:.3rem 0 0;color:#777;font-size:.95rem}
 .crumb a{color:#4b7bec;text-decoration:none} .crumb a:hover{text-decoration:underline}
 .site-footer{padding:1.2rem 0 2rem;border-top:1px solid #ddd;color:#888;font-size:.9rem}
-#modes{display:flex;gap:8px;margin:.9rem 0 0}
-button.mode{display:block;text-align:left;padding:7px 13px;border:1px solid #ddd;
   border-radius:7px;background:#fff;cursor:pointer;margin:0;line-height:1.3}
-button.mode b{display:block;font-size:12.5px;color:#444;font-weight:600}
-button.mode span{display:block;font-size:11px;color:#aaa;margin-top:1px}
-button.mode:hover{background:#f7f9fc}
-button.mode[aria-pressed="true"]{border-color:#4b7bec;background:#f2f7ff}
-button.mode[aria-pressed="true"] b{color:#1864ab}
-button.mode[aria-pressed="true"] span{color:#7a9cc6}
-#modeinfo{margin:.7rem 0 0;font-size:12.5px;color:#666;max-width:900px;line-height:1.55}
-#modeinfo b{color:#333}
-/* The bottom transport drives the single-run timeline; in compare mode the
-   race has its own controls and the old bar would do nothing. */
-body.compare #bar{display:none}
 *{box-sizing:border-box} body{margin:0;font:13px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;background:#fafafa;color:#222}
 #top{display:flex;gap:14px;padding:14px 0;align-items:flex-start;width:min(1500px,95vw);margin:0 auto}
 #left{flex:0 0 560px} #right{flex:1;min-width:0}
@@ -345,29 +293,7 @@ body.showing-before #beforebar{display:block}
 .tcard .cap{font-family:ui-monospace,monospace;font-size:11px;font-weight:600;
   color:#444;margin-bottom:3px}
 .tcard .cap .gen{color:#999;font-weight:400}
-/* ------------------------------------------------------------ compare */
-#cmp{display:none;width:min(1500px,95vw);margin:0 auto;padding:14px 0}
-body.compare #cmp{display:block}
-body.compare #top{display:none}
-.cmpgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.side{background:#fff;border:1px solid #ddd;border-radius:8px;padding:11px}
-.side.edge{border-color:#c9d8f0;background:#fcfdff}
-.side h2{margin:0;font-size:14px;font-family:'Libre Baskerville',serif}
-.side .sub{color:#999;font-size:11.5px;margin:1px 0 8px}
-.side.done{box-shadow:inset 0 0 0 2px #d3f9d8}
-.tally{display:flex;gap:16px;margin:8px 0 6px;font-size:12px;flex-wrap:wrap}
-.tally b{display:block;font-size:17px;font-family:Georgia,serif;color:#222;line-height:1.15}
-.tally span{display:block;color:#999;font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-top:1px}
-.tally .win b{color:#2b8a3e}
-.cmpcap{font-size:12px;color:#555;min-height:32px;margin-top:6px}
 .finished{color:#2b8a3e;font-weight:600}
-#cmpbar{display:flex;align-items:center;gap:10px;margin:12px 0 4px}
-#tick{flex:1}
-.strip{display:flex;align-items:flex-end;gap:2px;height:34px;margin-top:7px}
-.strip i{display:block;width:7px;background:#c9d8f0;border-radius:1px 1px 0 0}
-.strip i.now{background:#4b7bec}
-.strip i.seq{background:#e9ecef}
-.striplab{font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:.05em;margin-top:5px}
 .note2{font-size:11.5px;color:#666;background:#f8f9fa;border-left:3px solid #dee2e6;
   padding:7px 11px;border-radius:0 5px 5px 0;margin-top:11px;line-height:1.55}
 .tcard.out .cap{color:#5f3dc4}
@@ -451,13 +377,6 @@ svg text{font-family:-apple-system,Segoe UI,sans-serif}
   <a class="site-title" href="/">EDGE Algorithms</a>
   <p class="crumb">CRUMBHTML
      &nbsp;›&nbsp; interactive tensor walkthrough</p>
-  <div id="modes">
-   <button class="mode" id="mode-step" aria-pressed="true">
-     <b>Step through</b><span>one Einsum at a time, with every tensor</span></button>
-   <button class="mode" id="mode-cmp" aria-pressed="false">
-     <b>Compare</b><span>the same algorithm, written two ways</span></button>
-  </div>
-  <p id="modeinfo"></p>
 </div></header>
 <div id="top">
  <div id="left">
@@ -503,31 +422,6 @@ svg text{font-family:-apple-system,Segoe UI,sans-serif}
  <button id="next">▶</button><button id="last">⏭</button><button id="nextit">next iteration ⇥</button>
  <label style="margin-left:10px">speed <input id="speed" type="range" min="60" max="1200" value="840" style="vertical-align:-3px" title="slide right to go faster"></label>
  <input id="slider" type="range" min="0" value="0">
-</div></div>
-<div id="cmp"><div class="wrap" style="width:100%">
- <div class="cmpgrid">
-  <div class="side" id="sideA">
-   <h2 id="labA"></h2><div class="sub" id="subA"></div>
-   <svg id="gA" width="540" height="310"></svg>
-   <div class="tally" id="tallyA"></div>
-   <div class="cmpcap" id="capA"></div>
-  </div>
-  <div class="side edge" id="sideB">
-   <h2 id="labB"></h2><div class="sub" id="subB"></div>
-   <svg id="gB" width="540" height="310"></svg>
-   <div class="tally" id="tallyB"></div>
-   <div class="cmpcap" id="capB"></div>
-  </div>
- </div>
- <div id="cmpbar">
-  <button id="cfirst">⏮</button><button id="cprev">◀</button>
-  <button id="cplay">▶ play</button><button id="cnext">▶</button>
-  <button id="clast">⏭</button>
-  <span id="tickno" style="color:#888;font-size:12px;min-width:130px"></span>
-  <input id="tick" type="range" min="0" value="0">
- </div>
- <div class="strip" id="strip"></div>
- <div class="striplab" id="striplab"></div>
 </div></div>
 <footer class="site-footer"><div class="wrap"><p>EDGE is a notation for Extended General Einsums for Graph Algorithms.</p></div></footer>
 <script>
@@ -575,7 +469,7 @@ const NS='http://www.w3.org/2000/svg';
 function el(n,a){const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e;}
 /* ---- domain views ----------------------------------------------------
    The one part of the viewer that knows what the numbers MEAN. Everything
-   else -- tensor grids, transport, drill-down, compare mode -- works off the
+   else -- tensor grids, transport, drill-down -- works off the
    trace alone. A trace names its renderer in `domainView`, so a matrix view
    for a non-graph algorithm is a new entry here rather than surgery on the
    viewer. */
@@ -767,19 +661,12 @@ $('speed').oninput=()=>{if(timer){clearInterval(timer);
 $('btog').onclick=()=>{showBefore=!showBefore;render();};
 document.addEventListener('keyup',e=>{if(e.key==='b'||e.key==='B'){showBefore=false;render();}});
 document.onkeydown=e=>{
-  if((e.key==='c'||e.key==='C')&&!e.repeat){
-    setCompare(!document.body.classList.contains('compare'));return;}
-  if(document.body.classList.contains('compare')){
-    if(e.key==='ArrowRight'){cmpStop();cmpGo(cmpTick+1);}
-    if(e.key==='ArrowLeft'){cmpStop();cmpGo(cmpTick-1);}
-    if(e.key===' '){e.preventDefault();$('cplay').click();}
-    return;}
   if((e.key==='b'||e.key==='B')&&!e.repeat){showBefore=true;render();return;}
   if(e.key==='ArrowRight')go(cur+1);if(e.key==='ArrowLeft')go(cur-1);
   if(e.key===' '){e.preventDefault();$('play').click();}};
 /* ===================================================================
    Drill-down: recompute one Einsum in the browser and show its work.
-   The interpreter is the same edge_interp.js that verify_interp.js
+   The interpreter is the same edge_interp.js that the driver
    replays against the trace, so what is shown here is what was checked.
    =================================================================== */
 let EXEC=null;
@@ -1252,163 +1139,6 @@ function opCard(p){
 
 // ---- wiring --------------------------------------------------------------
 
-/* ===================================================================
-   Compare mode: the same algorithm, twice.
-
-   Left is the notebook's pseudocode transcribed literally -- one push or
-   relabel per step. Right is the EDGE cascade. Nobody parallelised anything
-   on either side; the cascade came out bulk-synchronous because an Einsum
-   evaluates every point of its iteration space independently.
-
-   The clock is ROUNDS, not seconds. One tick is one round on both sides: a
-   round costs the same whether one vertex acts or three, given enough
-   workers. Racing by wall-clock would be dishonest -- both finish instantly
-   in a browser -- so the honest measure is depth, and the counters show that
-   the two do near-identical WORK.
-   =================================================================== */
-let cmpTick=0, cmpTimer=null;
-const SEQT=SEQDATA;
-
-// Last step at or before this round -- the state as of the end of that round.
-function stateAt(tr,round){
-  let best=tr.steps[0];
-  for(const st of tr.steps){
-    const r=st.round; if(r===null||r===undefined)continue;
-    if(r<=round)best=st; else break;}
-  return best;}
-
-/* The third tally in compare mode: how far along each side is. What that
-   means is the algorithm's business, so the instance names a tensor and a
-   coordinate to read -- "the progress this race is about". Without one, the
-   tally is dropped rather than guessed at. */
-function progressAt(state){
-  const P=DOM.progress;
-  if(!P)return null;
-  const v=(state[P.tensor]||{})[P.coord];
-  return v===undefined?0:v;}
-
-// Operations completed by the end of a round.
-function opsBy(tr,round){
-  let n=0;
-  for(const st of tr.steps){
-    if(st.round===null||st.round===undefined||st.round>round)continue;
-    // Any named operation counts. Which names exist is the algorithm's
-    // business; the race only needs to know that something happened.
-    if(st.opKind)n+=(st.concurrency!==undefined?st.concurrency:1);}
-  return n;}
-
-function tallyHtml(tr,round,other){
-  const done=round>=tr.rounds;
-  const r=Math.min(round,tr.rounds), o=opsBy(tr,r);
-  const win=(x,y)=>x<y?' win':'';
-  return '<div class="'+win(tr.rounds,other.rounds)+'"><b>'+r+
-    (done?'':' / '+tr.rounds)+'</b><span>rounds</span></div>'+
-    '<div><b>'+o+'</b><span>operations</span></div>'+
-    (DOM.progress
-      ? '<div><b>'+progressAt(stateAt(tr,r).state)+
-        '</b><span>'+(DOM.progress.label||'progress')+'</span></div>'
-      : '');}
-
-// What happened in one round. A sequential step describes itself; a
-// bulk-synchronous round is better summarised by how many vertices acted,
-// which is exactly the quantity under comparison.
-function roundCaption(tr,r,st){
-  if(tr.variant!=='edge')return st.caption||'';
-  if(r<1)return st.caption||'';
-  // One tally per operation kind the algorithm declared, in the order it
-  // declared them. Reading the names off the trace rather than knowing them
-  // is what lets a different algorithm race without touching this.
-  const per={};
-  tr.steps.forEach(x=>{if(x.round!==r||!x.opKind)return;
-    per[x.opKind]=(per[x.opKind]||0)+(x.concurrency||0);});
-  const bits=Object.entries(per).filter(([,n])=>n)
-    .map(([k,n])=>'<b>'+n+'</b> '+k);
-  return (bits.join(', ')||'nothing to do')+
-    ' — all in the same round.';}
-
-function renderCompare(){
-  const A=SEQT, B=T;
-  const maxTick=Math.max(A.rounds,B.rounds);
-  $('tick').max=maxTick;
-  $('tick').value=cmpTick;
-  $('labA').textContent=A.label; $('subA').textContent=A.sublabel;
-  $('labB').textContent=B.label; $('subB').textContent=B.sublabel;
-
-  [[A,'gA','tallyA','capA','sideA',B],[B,'gB','tallyB','capB','sideB',A]]
-   .forEach(([tr,gid,tid,cid,sid,other])=>{
-    const r=Math.min(cmpTick,tr.rounds);
-    const st=stateAt(tr,r);
-    // A trace may supply a per-round highlight (everything that round
-    // touched); otherwise a step is its own round and carries its own.
-    const hl=cmpTick>tr.rounds ? {nodes:[],edges:[]}
-      : ((tr.roundHighlights&&tr.roundHighlights[r])||st.graphHighlight||{});
-    DOMAIN_VIEWS[tr.domainView]($(gid),st.state,hl,null);
-    $(tid).innerHTML=tallyHtml(tr,cmpTick,other);
-    $(sid).classList.toggle('done',cmpTick>=tr.rounds);
-    $(cid).innerHTML=cmpTick>=tr.rounds
-      ? '<span class="finished">Finished in '+tr.rounds+
-        ' rounds'+(tr.headline?' — '+tr.headline.label+' '+tr.headline.value:'')+'.</span>'
-      : roundCaption(tr,r,st);});
-
-  // Per-round concurrency: how many vertices acted. The sequential side is a
-  // flat row of ones by construction, which is the point.
-  const bars=[];
-  for(let r=1;r<=B.rounds;r++){
-    const n=opsBy(B,r)-opsBy(B,r-1);
-    bars.push('<i class="'+(r===Math.min(cmpTick,B.rounds)?'now':'')+
-      '" style="height:'+(6+n*8)+'px" title="round '+r+': '+n+
-      ' operation'+(n===1?'':'s')+'"></i>');}
-  $('strip').innerHTML=bars.join('');
-  $('striplab').textContent='operations per round — '+B.label+
-    ', peak '+Math.max(...(()=>{const a=[];for(let r=1;r<=B.rounds;r++)
-      a.push(opsBy(B,r)-opsBy(B,r-1));return a;})())+
-    '; '+A.label+' is 1 by construction';
-
-  $('tickno').textContent='round '+cmpTick+' of '+maxTick;}
-
-function cmpGo(t){
-  const maxTick=Math.max(SEQT.rounds,T.rounds);
-  cmpTick=Math.max(0,Math.min(maxTick,t));
-  renderCompare();}
-
-function cmpStop(){if(cmpTimer){clearInterval(cmpTimer);cmpTimer=null;
-  $('cplay').textContent='▶ play';}}
-
-function setCompare(on){
-  document.body.classList.toggle('compare',on);
-  $('mode-cmp').setAttribute('aria-pressed',on?'true':'false');
-  $('mode-step').setAttribute('aria-pressed',on?'false':'true');
-  $('modeinfo').innerHTML=on
-    ? 'Two runs of <b>the same algorithm</b> on the same graph: on the left '+
-      'the pseudocode from the notebook, transcribed literally — one push or '+
-      'relabel per step; on the right the EDGE cascade. Nobody parallelised '+
-      'anything on either side. Writing it as Einsums made it '+
-      'bulk-synchronous, because an Einsum evaluates every point of its '+
-      'iteration space independently. <b>The clock is rounds, not seconds.</b>'
-    : 'Steps through the EDGE cascade one Einsum at a time. '+
-      '<b>⇄ before / after</b> shows what an Einsum changed, '+
-      '<b>⊞ expand</b> opens the iteration space and how each value is '+
-      'computed.';
-  if(on){if(timer){clearInterval(timer);timer=null;$('play').textContent='▶ play';}
-         renderCompare();}
-  else cmpStop();}
-
-$('mode-step').onclick=()=>setCompare(false);
-$('mode-cmp').onclick=()=>setCompare(true);
-$('cnext').onclick=()=>{cmpStop();cmpGo(cmpTick+1);};
-$('cprev').onclick=()=>{cmpStop();cmpGo(cmpTick-1);};
-$('cfirst').onclick=()=>{cmpStop();cmpGo(0);};
-$('clast').onclick=()=>{cmpStop();cmpGo(Math.max(SEQT.rounds,T.rounds));};
-$('tick').oninput=()=>{cmpStop();cmpGo(+$('tick').value);};
-$('cplay').onclick=()=>{
-  if(cmpTimer){cmpStop();return;}
-  $('cplay').textContent='⏸ pause';
-  cmpTimer=setInterval(()=>{
-    const m=Math.max(SEQT.rounds,T.rounds);
-    if(cmpTick>=m)cmpStop(); else cmpGo(cmpTick+1);},420);};
-
-setCompare(false);
-
 render();
 document.getElementById('mjx').addEventListener('load',()=>{
   if(window.MathJax&&MathJax.startup&&MathJax.startup.promise)MathJax.startup.promise.then(render);});
@@ -1417,19 +1147,19 @@ document.getElementById('mjx').addEventListener('load',()=>{
 # would otherwise chew the middle out of "SEQTRACE" and leave a syntax error.
 _PH=["TRACE","DOMAINCFG","EXTENTMAP","RANKMAP","GROUPMAP","RANKNAMES","DESCS","ALIASMAP",
      "PAGETITLE","CRUMBHTML",
-     "IRPROGRAM","EINSUMIDX","SEQDATA"]
+     "IRPROGRAM","EINSUMIDX"]
 for _a in _PH:
     for _b in _PH:
         if _a!=_b and _a in _b:
             sys.exit(f"placeholder {_a!r} is a substring of {_b!r}; rename one")
 
 out=(HTML.replace("/*INTERPRETER*/",INTERP)
-     .replace("TRACE",json.dumps(annotate_edge_trace(T)))
+     .replace("TRACE",json.dumps(trace_header(T)))
      .replace("DOMAINCFG",json.dumps(DOMAIN)).replace("EXTENTMAP",json.dumps(EXTENTS))
      .replace("PAGETITLE",TITLE).replace("CRUMBHTML",CRUMB)
      .replace("RANKMAP",json.dumps(RANKS)).replace("GROUPMAP",json.dumps(GROUPS))
      .replace("RANKNAMES",json.dumps(meta.RANKNAMES)).replace("DESCS",json.dumps(meta.DESC))
      .replace("IRPROGRAM",json.dumps(IR)).replace("EINSUMIDX",json.dumps(EINSUM_IDX))
-     .replace("SEQDATA",json.dumps(SEQ)).replace("ALIASMAP",json.dumps(ALIAS)))
+     .replace("ALIASMAP",json.dumps(ALIAS)))
 open(os.path.join(OUT,"index.html"),"w").write(out)
 print("index.html written:",os.path.join(OUT,"index.html"),len(out),"bytes")

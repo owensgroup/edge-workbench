@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json, re, os, shutil, subprocess, sys
+from pathlib import Path
 
 # The page is built by EXECUTING THE SPECIFICATION. The driver runs the IR
 # over the instance and returns a trace; `annotate` adds the LaTeX, captions
@@ -31,6 +32,8 @@ HERE = str(paths.RENDER)                 # tool files: edge_interp.js
 SPEC = str(paths.spec(ALG))              # IR program, display metadata
 OUT = os.environ.get("EDGE_WORKBENCH_OUT", os.path.join(str(paths.ROOT), "build", ALG))
 VERIFY = str(paths.TOOL / "verify")
+#: Set by `edge_workbench check` for an author's algorithm: their verifier.py.
+AUTHOR_VERIFIER = os.environ.get("EDGE_WORKBENCH_VERIFIER")
 TESTS = str(paths.TESTS)
 ALGTESTS = str(paths.algorithm(ALG) / "tests")
 os.makedirs(OUT, exist_ok=True)
@@ -44,7 +47,63 @@ except ModuleNotFoundError:
 
 from edge_workbench.driver import run as driver          # noqa: E402
 from edge_workbench.render import annotate as ann        # noqa: E402
+from edge_workbench.render import latex                  # noqa: E402
+from edge_workbench.render import action_prose           # noqa: E402
+from edge_workbench.render import tensor_notes           # noqa: E402
+from edge_workbench import tutorial as _tut              # noqa: E402
 from edge_workbench import coverage                      # noqa: E402
+from edge_workbench import tensor_facts                  # noqa: E402
+from edge_workbench import domain_shape                  # noqa: E402
+from edge_workbench import prepare                       # noqa: E402
+
+# What the author wrote, read ONCE by `python3 -m edge_workbench.prepare` and
+# committed as spec/authored.json. The build does not open the tutorial.
+#
+# It used to. Meanings, tensor prose and the published answer all came out of
+# the .md while the page was being written, which made a build depend on which
+# branch a sibling checkout happened to be on -- and that showed the moment
+# work moved to a branch predating the tutorial's last edit: generic captions,
+# and three oracle gates failing for no reason to do with the algorithm.
+AUTHORED=prepare.load(paths.spec(ALG))
+
+
+def tutorial_tensor_notes():
+    return AUTHORED.get("tensorNotes", {})
+
+
+def tutorial_meanings():
+    """The author's per-Einsum meanings, from the prepared artifact.
+
+    Absent -> empty, and the page falls back to the generic caption.
+    `verify_meanings` decides whether that is acceptable; rendering and gating
+    are kept apart on purpose.
+    """
+    return AUTHORED.get("meanings", {})
+
+
+def verify_meanings(cascade, meanings):
+    """Every Einsum the author wrote must have a meaning they wrote.
+
+    The author is expected to explain each Einsum; this is what makes that an
+    expectation rather than a hope. Loud but not fatal when the tutorial has
+    no block at all, so an unmigrated tutorial still builds.
+    """
+    labels = set(cascade.get("labels", {}))
+    if not meanings:
+        print("!! no per-Einsum meanings in spec/authored.json -- generic "
+              "captions will be used. Run `python3 -m edge_workbench.prepare "
+              "<tutorial.md> --spec algorithms/<alg>/spec`.", file=sys.stderr)
+        return
+    missing = sorted(labels - set(meanings))
+    print(f"meanings      : {len(labels & set(meanings))}/{len(labels)} "
+          f"Einsums explained by the author")
+    if missing:
+        sys.exit(
+            f"\nBUILD ABORTED: the tutorial explains no meaning for "
+            f"{missing}.\nAdd them to `einsum_meanings` in the tutorial. "
+            f"index.html was NOT written."
+        )
+
 
 def verify_coverage(program, cascade, executed):
     """Every Einsum the author wrote must have run.
@@ -82,6 +141,20 @@ def verify_algorithm():
     worth less than one whose answer something did, and whoever reads the
     build log should be able to tell which they have.
     """
+    # An author's own algorithm carries a `verifier.py` written to the
+    # contract in edge_workbench/verifier.py; the tool runs it against this
+    # spec. Algorithms in this repository carry their own script instead.
+    if AUTHOR_VERIFIER:
+        r=subprocess.run([sys.executable,"-m","edge_workbench.verifier",
+                          "--spec",SPEC,"--verifier",AUTHOR_VERIFIER,"-n","12"],
+                         capture_output=True,text=True,cwd=str(paths.ROOT))
+        tail=[l for l in r.stdout.strip().splitlines() if l.strip()]
+        print("answer check  :", tail[-1].strip() if tail else "(no output)")
+        if r.returncode!=0:
+            sys.stdout.write(r.stdout); sys.stderr.write(r.stderr)
+            sys.exit(f"\nBUILD ABORTED: {ALG} failed its verifier.\n"
+                     f"index.html was NOT written.")
+        return
     verifier=os.path.join(paths.algorithm(ALG),"verify","verify_algorithm.py")
     if not os.path.exists(verifier):
         print("!! no verifier for", ALG, "-- answer check SKIPPED", file=sys.stderr)
@@ -109,16 +182,88 @@ _run=driver.run(ALG)
 # fully execute, whether the answer happens to be right is beside the point.
 IR_PROGRAM=json.load(open(driver._program_file(paths.spec(ALG))))
 verify_coverage(IR_PROGRAM, CASCADE, _run["executed"])
+verify_meanings(CASCADE, tutorial_meanings())
 verify_algorithm()
 
-T=ann.annotate({"steps":_run["steps"]}, meta, view)
+NAMED_VIEW = (view.DOMAIN_VIEW if view and hasattr(view, "DOMAIN_VIEW")
+              else INSTANCE.get("domain", {}).get("view"))
+
+# WHICH PICTURE THIS PROGRAM WANTS, derived from the program rather than
+# declared. The signal is where the rank-1 tensors live: max-flow's twelve are
+# all over U, so the two ranks of a rank-2 tensor index the same set and the
+# picture is a graph. Exact cover's split 17 on R and 6 on C, so they are
+# different sets and the picture is bipartite.
+#
+# This was computed and then ignored: `domainView` came from a hand-written
+# DOMAIN_VIEW in view.py or a `view` key in the instance, and the derivation
+# sat beside them unused -- which is the same as not having it, except more
+# reassuring. It is now the default when nobody names one, and `verify_view`
+# below makes a naming that CONTRADICTS it fail rather than silently win.
+DERIVED_VIEW = domain_shape.classify(
+    IR_PROGRAM, INSTANCE, CASCADE.get("generationalRank", "I"))
+
+# The left pane's heading. It was the literal word "Graph" for every
+# algorithm, which was true of the only algorithm there was. Exact cover has
+# no graph: it is a row/column incidence picture, and calling it a graph tells
+# a reader to look for something that is not there.
+PANEL_TITLE = {
+    domain_shape.GRAPH: "Graph",
+    domain_shape.BIPARTITE: "Rows and columns",
+    domain_shape.SEQUENCE: "Positions",
+}.get(NAMED_VIEW or DERIVED_VIEW["view"], "Domain")
+
+
+
+# One implementation, in domain_shape beside `classify`; author.py folds
+# the same findings into its instance stage. Fatal here because a page is
+# about to be written and there is no stage left to report to.
+_view_problems = domain_shape.disagreement(
+    NAMED_VIEW, IR_PROGRAM, INSTANCE, CASCADE.get('generationalRank', 'I'),
+    where=f'{ALG}/spec')
+if _view_problems:
+    for _p in _view_problems:
+        print(f"!! {_p}", file=sys.stderr)
+    sys.exit(1)
+print(f"domain view   : {NAMED_VIEW or DERIVED_VIEW['view']}"
+      + ("" if NAMED_VIEW else " (derived)")
+      + f" -- {DERIVED_VIEW['reason']}")
+
+LATEX=latex.render_all(IR_PROGRAM, CASCADE, ALIAS)
+T=ann.annotate({"steps":_run["steps"]}, meta, view, LATEX)
 T["iterations"]=_run["generations"]
+# In a bipartite picture a node id carries its side (`R:0`, `C:2`), because
+# row 0 and column 0 are different nodes. The generic highlight speaks bare
+# indices, so qualify them by the ranks of the tensor each step wrote.
+if (NAMED_VIEW or DERIVED_VIEW["view"]) == domain_shape.BIPARTITE:
+    _ranks_of = tensor_facts.all_facts(IR_PROGRAM, CASCADE)["rankNames"]
+    for _s in T["steps"]:
+        _rk = _ranks_of.get(_s.get("output") or "", [])
+        _hl = _s.get("graphHighlight") or {}
+        if len(_rk) == 1:
+            _hl["nodes"] = [domain_shape.qualify(_rk[0], n)
+                            for n in _hl.get("nodes", [])]
+        if len(_rk) == 2:
+            _hl["edges"] = [[domain_shape.qualify(_rk[0], a),
+                             domain_shape.qualify(_rk[1], b)]
+                            for a, b in _hl.get("edges", [])]
 T["graph"]=(view.graph(INSTANCE) if view and hasattr(view,"graph")
             else INSTANCE.get("domain",{}).get("graph"))
 T["note"]=("generated by executing the specification over the instance; "
            "no part of this page comes from a hand-written implementation")
 if view and hasattr(view,"headline"):
     T.update(view.headline(T["steps"][-1]["state"]))
+elif AUTHOR_VERIFIER:
+    # The number in the corner is the verifier's reading of the final state:
+    # the same function the answer gate just checked against `solve`.
+    from edge_workbench import verifier as _verifier
+    _v=_verifier.load(Path(AUTHOR_VERIFIER))
+    _ans=_verifier.normalise(
+        _verifier.read_answer(_v,{"steps":_run["steps"]},INSTANCE))
+    # A list of lists (exact cover's solutions) reads as sets; JS would
+    # otherwise flatten it into one run of numbers.
+    if isinstance(_ans,list) and all(isinstance(x,list) for x in _ans):
+        _ans=", ".join("{"+", ".join(map(str,x))+"}" for x in _ans) or "none"
+    T["headline"]={"label":getattr(_v,"ANSWER_LABEL","answer"),"value":_ans}
 print(f"driven trace  : {len(T['steps'])} steps, "
       f"{T['iterations']} generations"
       + (f", {T['headline']['label']} {T['headline']['value']}"
@@ -127,7 +272,16 @@ print(f"driven trace  : {len(T['steps'])} steps, "
 # single self-contained file. The same edge_interp.js drives the cascade,
 # so what the modal shows is exactly what the oracle checked.
 IR=json.load(open(driver._program_file(paths.spec(ALG))))
+# Host-supplied scalars (|R|, |V|) live in the instance, not the program. The
+# driver binds them before running; the page's drill-down recomputes from this
+# inlined copy, so it needs them too -- or it shows RowCount as 0 and divides
+# by it.
+for _d in IR["declarations"]:
+    if _d["name"] in INSTANCE.get("scalars", {}):
+        _d["value"] = INSTANCE["scalars"][_d["name"]]
 INTERP=open(os.path.join(HERE,"edge_interp.js"),encoding="utf-8").read()
+# The domain views are a module too, so they can be tested without a page.
+DVIEWS=open(os.path.join(HERE,"domain_views.js"),encoding="utf-8").read()
 
 # Spec einsum label -> position in the IR cascade, read from the algorithm's
 # own cascade.json rather than repeated here. A label mapping to a LIST is one
@@ -150,17 +304,33 @@ def trace_header(T):
     the viewer.
     """
     T["algorithm"] = ALG
-    T["domainView"] = (view.DOMAIN_VIEW if view and hasattr(view, "DOMAIN_VIEW")
-                       else INSTANCE.get("domain", {}).get("view"))
+    T["domainView"] = NAMED_VIEW or DERIVED_VIEW["view"]
     return T
 
-RANKS={n:len(r) for n,r in meta.RANKNAMES.items()}
-# Which tensors the before/after toggle can step back through: the ones that
-# carry a value from one generation to the next. Declared by the algorithm --
-# the tool cannot know which of a spec's tensors are state and which are
-# scratch without reading the spec, and meta.py is where the algorithm says
-# what its tensors are for.
-STATEFUL=set(getattr(meta,"STATEFUL",()))
+
+
+# What the page needs to know about each tensor, DERIVED from the program.
+# These were three hand-written lists in the algorithm's meta.py, restating
+# what the declarations and the cascade's generation pattern already say.
+#
+# `stateful` -- which tensors the before/after toggle can step back through --
+# is the one worth watching. The obvious rule ("written at i+1 and read at a
+# plain i") returns thirteen tensors here where five are carried; see
+# edge_workbench/tensor_facts.py for the clause that fixes it.
+# What each tensor is, beside its grid. The author's sentence comes from the
+# tutorial -- problem_statement for the tensors the problem has, tensor_notes
+# for the cascade intermediates -- and the provenance line after it is DERIVED:
+# which Einsum writes the tensor and which read it. That half was never
+# written anywhere, and for an intermediate it is most of what a reader wants.
+DESCS=tensor_notes.combine(IR_PROGRAM, CASCADE, tutorial_tensor_notes(), ALIAS)
+FACTS=tensor_facts.all_facts(IR_PROGRAM, CASCADE)
+RANKNAMES=FACTS["rankNames"]
+# Which rank each tensor is indexed by. A bipartite picture has two node sets
+# and a tensor belongs to exactly one of them; without this a row marking
+# would be read at a column's index.
+TENSORSIDE={n:(r[0] if len(r)==1 else "") for n,r in RANKNAMES.items()}
+RANKS={n:len(r) for n,r in RANKNAMES.items()}
+STATEFUL=FACTS["stateful"]
 # How the domain view draws this algorithm. Everything in here is data: the
 # layout, which tensor labels a node, which colours a vertex. A second graph
 # algorithm is a different block, not a different renderer.
@@ -190,14 +360,23 @@ for _g in GROUPS.values():
         if _DECL[_n].get("empty_value") is None:
             sys.exit("tensor %r has no empty_value in the IR; every grid "
                      "labels one" % _n)
-GEN_RE=re.compile(r'^\\?(?:\\mathit\{)?([A-Za-z]+)\}?_\{([^,}]+)')
+# The formula and the generation both come from the IR. Neither is prose,
+# and neither can disagree with what runs -- which the hand-written table
+# demonstrably could: it showed `Adm` for an Einsum that writes `AdmPost`,
+# named the wrong operator as E10's choice function, and quietly dropped one
+# of E08's two labelled Map specs.
+OUTGEN=latex.generations(IR_PROGRAM, CASCADE)
+# The two halves of each explanation come from the two places that can know
+# them. What an Einsum MEANS for the problem is the author's, and comes from
+# the tutorial; what it DOES over its iteration space is determined by the
+# program, and is generated. Neither is retyped in this repository.
+MEANINGS=tutorial_meanings()
+ACTIONS=action_prose.describe_all(IR_PROGRAM, CASCADE, ALIAS)
 for s in T["steps"]:
-    g,e=meta.MEANING.get(s["einsum"],(s.get("caption",""),""))
-    s["graphMeaning"],s["einsumMeaning"]=g,e
-    s["latex"]=meta.LATEX.get(s["einsum"],"")
-    m=GEN_RE.match(s["latex"].lstrip())
-    gen=m.group(2).strip() if m else None
-    if gen and "equiv" in gen: gen=gen.split("equiv")[-1].strip()   # i \equiv 1 -> 1
+    s["graphMeaning"]=MEANINGS.get(s["einsum"], s.get("caption",""))
+    s["einsumMeaning"]=ACTIONS.get(s["einsum"], "")
+    s["latex"]=LATEX.get(s["einsum"],"")
+    gen=OUTGEN.get(s["einsum"])
     s["outGen"]=gen if gen in ("i","i+1") or (gen or "").isdigit() else None
     s["stateful"]=s.get("output") in STATEFUL
     s["hasPrior"]=bool(s.get("output")) and s["einsum"]!="stop"
@@ -380,7 +559,7 @@ svg text{font-family:-apple-system,Segoe UI,sans-serif}
 </div></header>
 <div id="top">
  <div id="left">
-  <div class="panel"><h3>Graph</h3><svg id="g" width="540" height="310"></svg>
+  <div class="panel"><h3>PANELTITLE</h3><svg id="g" width="540" height="310"></svg>
    <div id="legend">
     <div id="domlegend"></div>
     <div id="fillegend"><span><span class="sw" style="background:#e8590c"></span>touched this step</span></div>
@@ -393,7 +572,7 @@ svg text{font-family:-apple-system,Segoe UI,sans-serif}
      <span><span class="sw" style="background:#8ce99a"></span>true</span></div>
    </div></div>
   <div class="panel"><h3>Static tensors <span class="sub">— no rank I; never change</span></h3>
-   <div id="static1" class="row r3"></div><h4>capacity</h4><div id="static2" class="row r2"></div></div>
+   <div id="static1" class="row r3"></div><h4>&nbsp;</h4><div id="static2" class="row r2"></div></div>
  </div>
  <div id="right">
   <div class="panel" id="now">
@@ -401,7 +580,7 @@ svg text{font-family:-apple-system,Segoe UI,sans-serif}
     <button id="btog" aria-pressed="false" title="Show the output tensor as it was before this Einsum ran. Hold B to peek.">⇄ before / after</button>
 </div>
    <div id="expr"></div>
-   <div class="mean"><b>Graph meaning</b><span id="mg"></span><b>Einsum meaning</b><span id="me"></span></div>
+   <div class="mean"><b>Meaning</b><span id="mg"></span><b>Einsum meaning</b><span id="me"></span></div>
    <div id="beforebar"></div>
    <div id="execpanel">
    <h3 id="exech">How this Einsum executes
@@ -431,6 +610,7 @@ svg text{font-family:-apple-system,Segoe UI,sans-serif}
 const IR=IRPROGRAM, EIDX=EINSUMIDX;
 </script>
 <script>
+const TENSORSIDE=TSIDEMAP;
 const T=TRACE,DOM=DOMAINCFG,POS=DOM.positions||{},RANKS=RANKMAP,GROUPS=GROUPMAP,RN=RANKNAMES,DESC=DESCS;
 /* The extent comes from the instance, not from the picture: an algorithm
    with no graph still has ranks to size its grids by. */
@@ -467,76 +647,11 @@ function typeset(s){
 
 const NS='http://www.w3.org/2000/svg';
 function el(n,a){const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e;}
-/* ---- domain views ----------------------------------------------------
-   The one part of the viewer that knows what the numbers MEAN. Everything
-   else -- tensor grids, transport, drill-down -- works off the
-   trace alone. A trace names its renderer in `domainView`, so a matrix view
-   for a non-graph algorithm is a new entry here rather than surgery on the
-   viewer. */
-const DOMAIN_VIEWS={};
-
-/* A graph, drawn from a description rather than from knowledge of one
-   algorithm. The instance's `domain` block says where the vertices go, which
-   tensor labels an edge, which tensors colour a node and which label it. So
-   BFS and Dijkstra reuse this renderer with a different block; only a genuinely
-   different PICTURE -- a matrix, a board -- is a new entry here. */
-DOMAIN_VIEWS['graph']=function(g,st,hl,pv){
-  g.innerHTML='';const defs=el('defs');
-  // a label plus, when its rendered text just changed, a highlight pill behind it
-  const lab=(x,y,txt,was,col)=>{
-    const chg=(was!==null&&was!==undefined&&was!==txt);
-    if(chg)g.appendChild(el('rect',{x:x-(txt.length*2.9+4),y:y-9,
-      width:txt.length*5.8+8,height:12,rx:3,fill:'#ffe8cc',stroke:'#e8590c','stroke-width':.8}));
-    const t=el('text',{x:x,y:y,'text-anchor':'middle','font-size':10,
-      fill:chg?'#e8590c':col,'font-weight':chg?700:400});
-    t.textContent=txt;g.appendChild(t);};
-  for(const[id,c]of[['a','#999'],['ah','#e8590c']]){
-    const m=el('marker',{id:id,viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:6,markerHeight:6,orient:'auto-start-reverse'});
-    m.appendChild(el('path',{d:'M0,0 L10,5 L0,10 z',fill:c}));defs.appendChild(m);}
-  g.appendChild(defs);
-  const hle=new Set((hl.edges||[]).map(e=>e.join(','))),hln=new Set(hl.nodes||[]);
-  // A push can travel along a RESIDUAL edge that has no line of its own --
-  // (4,2) when only (2,4) is a capacity edge. That push reduces the flow on
-  // (2,4), so the pipe whose number changes is the one to light. Only when
-  // the reverse is not itself a drawn edge: an antiparallel pair like (1,2)
-  // and (2,1) gets two lines and must stay distinguishable.
-  const drawn=new Set(EDGES.map(e=>e.u+','+e.v));
-  const isLit=e=>hle.has(e.u+','+e.v)||
-    (hle.has(e.v+','+e.u)&&!drawn.has(e.v+','+e.u));
-  EDGES.forEach(e=>{const[x1,y1]=POS[e.u],[x2,y2]=POS[e.v];
-    const anti=EDGES.some(o=>o.u===e.v&&o.v===e.u);
-    const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy),ux=dx/L,uy=dy/L,px=-uy,py=ux,off=anti?11:0,r=22;
-    const sx=x1+ux*r+px*off,sy=y1+uy*r+py*off,tx=x2-ux*r+px*off,ty=y2-uy*r+py*off;
-    const on=isLit(e);
-    g.appendChild(el('line',{x1:sx,y1:sy,x2:tx,y2:ty,stroke:on?'#e8590c':'#999',
-      'stroke-width':on?3:1.4,'marker-end':`url(#${on?'ah':'a'})`}));
-    const EL=DOM.edgeLabel;
-    if(EL){
-      const fv=q=>{
-        let f=q?((q[EL.tensor]||{})[e.u+','+e.v]??EL.empty??0):(EL.empty??0);
-        if(EL.clampNegative&&f<0)f=0;
-        return EL.over?`${f}/${e[EL.over]}`:String(f);};
-      lab((sx+tx)/2+px*13,(sy+ty)/2+py*13+4,fv(st),pv?fv(pv):null,
-          on?'#e8590c':'#555');}});
-  (DOM.graph.nodes||[]).forEach(v=>{
-    const[x,y]=POS[v]||[0,0],on=hln.has(v);
-    // First matching rule wins, so the instance orders them by priority --
-    // source and sink before "currently active", which is what a reader
-    // expects when a vertex is both.
-    let fill='#fff';
-    for(const r of (DOM.nodeFill||[])){
-      const t=st[r.tensor]||{};
-      if(t[v]!==undefined&&t[v]!==false){fill=r.color;break;}}
-    g.appendChild(el('circle',{cx:x,cy:y,r:22,fill:fill,
-      stroke:on?'#e8590c':'#555','stroke-width':on?3:1.5}));
-    const a=el('text',{x:x,y:y+4,'text-anchor':'middle','font-size':14,'font-weight':600});
-    a.textContent=v;g.appendChild(a);
-    (DOM.nodeLabels||[]).forEach((L,i)=>{
-      const txt=q=>(L.prefix||'')+
-        (q&&q[L.tensor]?(q[L.tensor][v]??L.empty??''):(L.empty??''));
-      const dy=L.place==='below'?36:-29;
-      lab(x,y+dy,txt(st),pv?txt(pv):null,L.color||'#555');});});
-};
+/*DOMAINVIEWS*/
+/* The domain views are a module so they can be tested without building a
+   page; the page supplies what they used to read from globals here. */
+const DOMAIN_VIEWS=EdgeDomainViews.makeViews({
+  el:el, DOM:DOM, POS:POS, EDGES:EDGES, tensorSide:TENSORSIDE});
 
 // The main pane always draws the EDGE trace into #g.
 function drawGraph(st,hl,pv){
@@ -1093,6 +1208,8 @@ function operandLine(p){
     return '<div class="opnd">( … )<sub>'+(p.boundTo||[]).join(',')+'</sub> = '+
       (p.present?'<span class="v">'+fmt(p.value)+'</span>'
                 :'<span class="abs">absent</span>')+'</div>';
+  if(p.op==='occupancy')
+    return '<div class="opnd">‖'+shownName(p.tensor)+'‖ <span style="color:#aaa">(entries it holds)</span> = <span class="v">'+fmt(p.value)+'</span></div>';
   if(p.op==='not')
     return '<div class="opnd">¬'+plain(p.inner)+' = '+
       (p.value?'<span class="v">true</span>':'<span class="abs">false</span>')+'</div>';
@@ -1147,18 +1264,21 @@ document.getElementById('mjx').addEventListener('load',()=>{
 # would otherwise chew the middle out of "SEQTRACE" and leave a syntax error.
 _PH=["TRACE","DOMAINCFG","EXTENTMAP","RANKMAP","GROUPMAP","RANKNAMES","DESCS","ALIASMAP",
      "PAGETITLE","CRUMBHTML",
-     "IRPROGRAM","EINSUMIDX"]
+     "IRPROGRAM","EINSUMIDX","TSIDEMAP","PANELTITLE"]
 for _a in _PH:
     for _b in _PH:
         if _a!=_b and _a in _b:
             sys.exit(f"placeholder {_a!r} is a substring of {_b!r}; rename one")
 
 out=(HTML.replace("/*INTERPRETER*/",INTERP)
+     .replace("/*DOMAINVIEWS*/",DVIEWS)
      .replace("TRACE",json.dumps(trace_header(T)))
      .replace("DOMAINCFG",json.dumps(DOMAIN)).replace("EXTENTMAP",json.dumps(EXTENTS))
      .replace("PAGETITLE",TITLE).replace("CRUMBHTML",CRUMB)
+     .replace("PANELTITLE",PANEL_TITLE)
      .replace("RANKMAP",json.dumps(RANKS)).replace("GROUPMAP",json.dumps(GROUPS))
-     .replace("RANKNAMES",json.dumps(meta.RANKNAMES)).replace("DESCS",json.dumps(meta.DESC))
+     .replace("RANKNAMES",json.dumps(RANKNAMES))
+     .replace("TSIDEMAP",json.dumps(TENSORSIDE)).replace("DESCS",json.dumps(DESCS))
      .replace("IRPROGRAM",json.dumps(IR)).replace("EINSUMIDX",json.dumps(EINSUM_IDX))
      .replace("ALIASMAP",json.dumps(ALIAS)))
 open(os.path.join(OUT,"index.html"),"w").write(out)

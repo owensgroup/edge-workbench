@@ -34,7 +34,8 @@ const cascade = rd(spec + "/cascade.json");
 if (process.env.EW_SELECTORS) {
   cascade.selectors = JSON.parse(process.env.EW_SELECTORS);
 }
-const r = runCascade(rd(process.env.EW_PROGRAM), rd(spec + "/instance.json"),
+const r = runCascade(rd(process.env.EW_PROGRAM),
+                     rd(process.env.EW_INSTANCE || spec + "/instance.json"),
                      cascade, {});
 process.stdout.write(JSON.stringify(r));
 """
@@ -44,7 +45,8 @@ class DriverError(RuntimeError):
     pass
 
 
-def run(algorithm: str | None = None, *, program: str | None = None,
+def run(algorithm: str | None = None, *, spec_dir: str | Path | None = None,
+        program: str | None = None, instance: str | None = None,
         selectors: dict | None = None) -> dict:
     """Execute the cascade and return {generations, steps, executed}.
 
@@ -53,6 +55,14 @@ def run(algorithm: str | None = None, *, program: str | None = None,
 
     `selectors` overrides the algorithm's own mapping -- used by tests that
     need to pin a free choice, never by the build.
+
+    `instance` runs a different problem instance than the algorithm's own.
+    The verifier uses it to sweep generated instances through THIS driver,
+    rather than through a second implementation of the cascade written to
+    agree with it.
+
+    `spec_dir` runs a spec directory that is not one of this repository's
+    algorithms -- an author's own, being checked by `edge_workbench check`.
     """
     if shutil.which("node") is None:
         raise DriverError(
@@ -61,7 +71,7 @@ def run(algorithm: str | None = None, *, program: str | None = None,
             "browser; there is no Python fallback on purpose, so that there "
             "is only one evaluator to keep honest."
         )
-    spec = paths.spec(algorithm)
+    spec = Path(spec_dir) if spec_dir is not None else paths.spec(algorithm)
     prog = Path(program) if program else _program_file(spec)
     env = dict(
         os.environ,
@@ -69,6 +79,8 @@ def run(algorithm: str | None = None, *, program: str | None = None,
         EW_SPEC=str(spec),
         EW_PROGRAM=str(prog),
     )
+    if instance is not None:
+        env["EW_INSTANCE"] = str(instance)
     if selectors is not None:
         env["EW_SELECTORS"] = json.dumps(selectors)
 

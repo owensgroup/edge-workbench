@@ -32,7 +32,7 @@ def test_the_vendored_ir_is_the_one_upstream_ships():
 
     The IR is copied in rather than read across checkouts so the build does
     not depend on a sibling repo being present. The cost is that it can go
-    stale silently, which is exactly what happened before `AdmPost` landed --
+    stale silently, which is exactly what happened when `AdmPost` landed --
     so when the sibling IS present, say so.
     """
     import json

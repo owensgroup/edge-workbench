@@ -1,0 +1,158 @@
+{
+ "_comment": [
+  "Layer 2 findings this algorithm is KNOWN to have, pinned to their exact",
+  "shape rather than skipped -- and, below them, the four places the",
+  "tutorial does not determine the encoding.",
+  "",
+  "A finding that is merely tolerated becomes invisible: the run goes green,",
+  "nobody reads the list, and a genuinely new violation arrives among the",
+  "old ones unnoticed. So the baseline is asserted in both directions -- a",
+  "new violating tensor fails, and so does one that has been FIXED, because",
+  "then this file is stale and should shrink.",
+  "",
+  "As of the first build, both Layer 2 validators come back CLEAN for this",
+  "cascade: single assignment and UDF names. That is a positive claim, not",
+  "an absence of checking."
+ ],
+ "singleAssignment": {
+  "tensors": [],
+  "why": [
+   "Clean. Unlike max-flow, no tensor is seeded at a literal generation",
+   "inside the cascade: S_0 is written by the INITIALIZATION block, and",
+   "Path_0 is not written at all -- an absent tensor is the empty path.",
+   "Every cascade Einsum writes either generation i or generation i+1, never",
+   "both, and no two write the same slice."
+  ]
+ },
+ "specUndetermined": [
+  {
+   "id": "read-only-tensors-with-no-source",
+   "where": "E09 reads Col_c; E11 reads Row_r",
+   "what": [
+    "CORRECTED. This entry first said six tensors were undeclared -- F, d*,",
+    "TPath, NewPathEntry, Col and Row -- and that was the wrong complaint.",
+    "",
+    "Declaring an intermediate by its first appearance on a LHS is the house",
+    "convention, not an omission. Max-flow declares NINE tensors and uses",
+    "twenty-three: ActR, Adm, Delta, Lbl, NST, PushCand, InPush, OutPush,",
+    "HasAdm, Rel, NeiLbl, MinNeiLbl and NewD are all introduced exactly that",
+    "way. Set-cover declares sixteen, so by that measure it is the better",
+    "documented of the two. F, d*, TPath and NewPathEntry are all written",
+    "before they are read and raise no question the convention does not",
+    "already answer.",
+    "",
+    "Col and Row are the different case, and max-flow has none like them:",
+    "they are READ and NEVER WRITTEN, by any Einsum or initialization. There",
+    "is no first-use-on-a-LHS to define them and no declaration either, so",
+    "nothing in the tutorial says where their values come from.",
+    "",
+    "They also are not really data. Col_c is 'present at every c' -- the",
+    "universe of the rank C, which the rank's own extent already fixes. EDGE",
+    "appears to have no notation for an all-present indicator over a rank, so",
+    "the cascade reaches for a tensor and then cannot say what it holds."
+   ],
+   "encodedAs": [
+    "bool/False tensors supplied by the host alongside A and InitS.",
+    "",
+    "Not derived from A, which would be wrong: a column that no row covers",
+    "still exists, and dropping it would silently make an unsatisfiable",
+    "instance look solvable."
+   ],
+   "askTheAuthor": [
+    "Should Col and Row be declared as inputs, or does EDGE want a way to",
+    "write 'every coordinate of this rank' without a tensor standing in?"
+   ],
+   "mechanicallyCheckable": [
+    "A tensor read by some Einsum, written by none, and declared nowhere has",
+    "no source. That is decidable from the IR alone and would have found",
+    "this without anyone reading the cascade -- a candidate Layer 2 check."
+   ]
+  },
+  {
+   "id": "E04-less-than",
+   "where": "TPath_{i,r} = Path_{i,r} . d*_i :: /\\ <(^)",
+   "what": [
+    "The registry's `lt` returns a boolean, but TPath feeds E06's partial",
+    "update to form Path_{i+1}, whose entries are DEPTHS.",
+    "",
+    "The tutorial's own worked example settles which is meant: at i = 2 the",
+    "path is {R3:1, R2:2} with d* = 2, and Path_3 is {R3:1, R0:2}. The",
+    "surviving entry kept its depth of 1. It did not become True."
+   ],
+   "encodedAs": [
+    "A user-defined `take_left_if_less` -- the left value where it is less",
+    "than the right, the output's empty value otherwise.",
+    "",
+    "Deliberately NOT named `lt` and not aliased to it, so the operator",
+    "comparison against the surface form reports the divergence instead of",
+    "absorbing it."
+   ],
+   "askTheAuthor": "Is `<` here a filter on the value, or a boolean test?"
+  },
+  {
+   "id": "E07-union-merge",
+   "where": "SelRow_{i+1,r} = Path_{i+1,r} . 0 :: /\\ >=(u)",
+   "status": "WITHDRAWN -- this was never a finding. The tutorial is right.",
+   "what": [
+    "Recorded as a divergence, on the claim that a union merge makes an",
+    "absent Path entry arrive at `ge` as None. It does not. The evaluator",
+    "passes `value_or_empty`, so an absent entry arrives as Path's empty",
+    "value of -1 -- and then the tutorial's union is not merely tolerable,",
+    "it is correct FOR the reason EDGE's empty-value rule exists:",
+    "",
+    "  Zero is present at every r, so every row enters the map;",
+    "  an absent Path entry reads as -1; -1 >= 0 is False;",
+    "  False is SelRow's empty value, so the row stays absent.",
+    "",
+    "The rule does the filtering an intersect merge would otherwise have to",
+    "do, which is the point of having the rule.",
+    "",
+    "WHERE THE None ACTUALLY CAME FROM: this repository's own",
+    "take_left_if_less, which returned None for a filtered point instead of",
+    "the output's empty value. That stored None as a VALUE in TPath, which",
+    "flowed through E06 into Path_{i+1} and only raised two Einsums later,",
+    "at E07. Both were changed in the same edit -- the UDF was fixed and E07",
+    "was switched to intersect -- and the fix was credited to the wrong one.",
+    "",
+    "Changing two things and attributing the result to one of them is how a",
+    "correct specification acquires a false finding against it."
+   ],
+   "encodedAs": [
+    "The union merge the tutorial writes. Re-verified: both worked examples",
+    "reproduce exactly, and 60/60 random instances agree with brute force."
+   ]
+  },
+  {
+   "id": "E12-occupancy",
+   "where": "Success_{i+1} = ||ActiveCol_{i+1}|| == 0",
+   "what": [
+    "`occupancy` is available to a StoppingCondition, not to an Einsum",
+    "expression, so this cannot be written as one Einsum."
+   ],
+   "encodedAs": [
+    "An OR-reduction over the columns, then a negation against TrueConst.",
+    "Equivalent, and the equivalence is why the difference is allowed."
+   ],
+   "askTheAuthor": "Should properties be usable in expression position?"
+  }
+ ],
+ "invisibleToTheAnswer": [
+  {
+   "id": "E16-select-min-val",
+   "what": [
+    "E16's `1(select-min-val)` is Knuth's S heuristic: branch on the most",
+    "constrained column. Replacing it with select-max-val changes NOTHING",
+    "about the result -- measured over 25 random instances, the full",
+    "solution SET was identical on all 25.",
+    "",
+    "It is still a real difference from the specification. Measured over 36",
+    "larger instances: 142 iterations with min, 234 with max; min explored",
+    "fewer on 27 and more on 0.",
+    "",
+    "So no answer oracle, however good, can defend this operator. Only the",
+    "comparison against the surface form can. This is the concrete case the",
+    "operator-comparison gate exists for."
+   ]
+  }
+ ]
+}

@@ -1,0 +1,60 @@
+{
+ "_comment": [
+  "How the page DRAWS this algorithm. Presentation, so it lives with the",
+  "algorithm rather than in the tutorial: an author states a graph, not a",
+  "palette, and asking for one would put a colour scheme in every tutorial.",
+  "",
+  "The graph itself, the extents and the node positions are NOT here. They",
+  "come from the tutorial's working_example_data, via",
+  "edge_workbench/tutorial.py, so the page runs the example the page",
+  "describes. `progress.coord` is filled in from the tutorial's sink.",
+  "",
+  "The renderer is generic -- it places vertices, colours them by which",
+  "tensor holds them, and labels them and the edges from named tensors -- so",
+  "another graph algorithm is a different file like this one, not a",
+  "different renderer."
+ ],
+ "view": "graph",
+ "nodeFill": [
+  {
+   "tensor": "S",
+   "color": "#d3f9d8",
+   "label": "source"
+  },
+  {
+   "tensor": "T",
+   "color": "#ffe3e3",
+   "label": "sink"
+  },
+  {
+   "tensor": "Act",
+   "color": "#fff3bf",
+   "label": "active vertex (in Act)"
+  }
+ ],
+ "nodeLabels": [
+  {
+   "prefix": "d=",
+   "tensor": "D",
+   "empty": "\u221e",
+   "color": "#0b7285",
+   "place": "above"
+  },
+  {
+   "prefix": "e=",
+   "tensor": "E",
+   "empty": 0,
+   "color": "#c92a2a",
+   "place": "below"
+  }
+ ],
+ "edgeLabel": {
+  "tensor": "F",
+  "over": "cap",
+  "clampNegative": true
+ },
+ "progress": {
+  "tensor": "E",
+  "label": "flow to sink"
+ }
+}

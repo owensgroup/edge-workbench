@@ -1,0 +1,90 @@
+# Exact cover (Knuth's Algorithm X) -- ASCII surface form of the tutorial's
+# edge_expression, transcribed line for line.
+
+- Tensors
+A^{R, C}            -> Boolean, empty = False
+S^{I, R}            -> integer, empty = -1
+Path^{I, R}         -> integer, empty = -1
+SelRow^{I, R}       -> Boolean, empty = False
+CovCol^{I, C}       -> Boolean, empty = False
+ActiveCol^{I, C}    -> Boolean, empty = False
+ConflictRow^{I, R}  -> Boolean, empty = False
+ActiveRow^{I, R}    -> Boolean, empty = False
+Success^{I}         -> Boolean, empty = False
+Sol^{I, R}          -> Boolean, empty = False
+RowCounts^{I, C}    -> integer, empty = 0
+ActiveCounts^{I, C} -> integer, empty = 0
+PickedCol^{I, C}    -> Boolean, empty = False
+Candidates^{I, R}   -> Boolean, empty = False
+NewChoices^{I, R}   -> integer, empty = -1
+T^{I, R}            -> integer, empty = -1
+Keep^{I, R}         -> Boolean, empty = False
+
+# NOT declared in the tutorial. Used by the cascade below, so they are
+# declared here; the empty values are choices, not the tutorial's.
+F^{I, R}            -> integer, empty = -1
+DStar^{I}           -> integer, empty = 0
+TPath^{I, R}        -> integer, empty = -1
+NewPathEntry^{I, R} -> integer, empty = -1
+# Read by E09 and E11, written by nothing: the rank universes.
+Col^{C}             -> Boolean, empty = False
+Row^{R}             -> Boolean, empty = False
+# The stack seed the tutorial states in prose ("initial candidates ...").
+InitS^{R}           -> integer, empty = -1
+
+- Initializations
+# InitS: the rows covering the column with fewest rows, stamped sigma(1, r)
+S_{0, r} = InitS_r
+
+- Extended Einsums
+# peek and pop
+# E01: the top of the stack
+F_{i, r*} = S_{i, r} :: <<<_{r*} 1(select-max-val)
+# E02: its depth
+d*_i = floor( F_{i, r} / |R| ) :: \/ max(∪)
+# E03: pop it
+T_{i, r} = S_{i, r} . not F_{i, r} :: /\ <-(∩)
+
+# update path
+# E04: which path entries are shallower than the popped depth
+Keep_{i, r} = Path_{i, r} . d*_i :: /\ <(∩)
+# E05: keep those entries, with their depths
+TPath_{i, r} = Path_{i, r} . Keep_{i, r} :: /\ <-(∩)
+# E06: the popped row at its depth
+NewPathEntry_{i, r} = F_{i, r} . d*_i :: /\ ->(∩)
+# E07: the new path
+Path_{i+1, r} = TPath_{i, r} . NewPathEntry_{i, r} :: /\ <<(∪)
+
+# active subset computation
+# E08: rows on the path
+SelRow_{i+1, r} = Path_{i+1, r} . 0 :: /\ >=(∪)
+# E09: columns they cover
+CovCol_{i+1, c} = A_{r, c} . SelRow_{i+1, r} :: /\ <-(∩) \/ ANY(∪)
+# E10: columns still to cover
+ActiveCol_{i+1, c} = Col_c . not CovCol_{i+1, c} :: /\ <-(∩)
+# E11: rows that would cover a covered column again
+ConflictRow_{i+1, r} = A_{r, c} . CovCol_{i+1, c} :: /\ <-(∩) \/ ANY(∪)
+# E12: rows still usable
+ActiveRow_{i+1, r} = Row_r . not ConflictRow_{i+1, r} . not SelRow_{i+1, r} :: /\ <-(∩)
+
+# success evaluation
+# E13: every column covered
+Success_{i+1} = ||ActiveCol_{i+1}|| == 0
+# E14: record the solution
+Sol_{i+1, r} = SelRow_{i+1, r} . Success_{i+1} :: /\ <-(∩)
+
+# branch and push
+# E15: active rows per column
+RowCounts_{i+1, c} = A_{r, c} . ActiveRow_{i+1, r} :: /\ <-(∩) \/ +(∪)
+# E16: restricted to active columns
+ActiveCounts_{i+1, c} = RowCounts_{i+1, c} . ActiveCol_{i+1, c} :: /\ <-(∩)
+# E17: the column with fewest options (Knuth's S heuristic)
+PickedCol_{i+1, c*} = ActiveCounts_{i+1, c} :: <<<_{c*} 1(select-min-val)
+# E18: active rows covering it
+Candidates_{i+1, r} = (A_{r, c} . PickedCol_{i+1, c} :: /\ <-(∩) \/ ANY(∪)) . ActiveRow_{i+1, r} :: /\ <-(∩)
+# E19: stamp them one level deeper
+NewChoices_{i+1, r} = Candidates_{i+1, r} . sigma(d*_i + 1, r) :: /\ ->(∩)
+# E20: push
+S_{i+1, r} = T_{i, r} . NewChoices_{i+1, r} :: /\ <<(∪)
+
+<> : ||S_{i+1}|| == 0

@@ -53,14 +53,21 @@ const BY_COORD = (extreme) => (cands) =>
     (extreme === "min" ? cmpCoord(b, a) < 0 : cmpCoord(b, a) > 0) ? b : a
   );
 
-// Ranked by value, ties broken by the coordinate -- the same key upstream
-// uses, `(value, coord)`, so a tie cannot resolve differently in the two
-// implementations and turn into a spurious disagreement.
+// Ranked by value. The tie-break matches upstream exactly, so a tie cannot
+// resolve differently in the two implementations:
+//
+//   select-min-val  ties go to the FIRST ARRIVAL, as in select-any. `cands`
+//                   is in iteration-space order, so the earlier candidate is
+//                   kept -- the same answer upstream's SequentialSchedule
+//                   gives. Any tied minimum is correct for the algorithm, so
+//                   preferring a coordinate would claim something it does not.
+//   select-max-val  ties broken by the coordinate, key `(value, coord)`.
 const BY_VALUE = (extreme) => (cands) =>
   cands.reduce((a, b) => {
+    if (extreme === "min") return b.value < a.value ? b : a;
     const d = b.value === a.value ? cmpCoord(b, a)
       : (b.value < a.value ? -1 : 1);
-    return (extreme === "min" ? d < 0 : d > 0) ? b : a;
+    return d > 0 ? b : a;
   });
 
 const RULES = {};

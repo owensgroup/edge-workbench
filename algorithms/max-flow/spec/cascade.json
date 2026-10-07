@@ -23,7 +23,7 @@
   "  write once a coordinate is chosen. An unmapped name stops the cascade",
   "  rather than being guessed at.",
   "",
-  "  select-one-admissible-v is genuinely free: E10 is written",
+  "  pick-admissible-edge is genuinely free: E10 is written",
   "  1(pick-admissible-edge), which says ANY admissible edge. So the default is",
   "  seeded-random, not a rule -- a deterministic rule would make the spec",
   "  claim something it does not, and would sample the legal executions with a",
@@ -71,7 +71,7 @@
   "E24": 25
  },
  "selectors": {
-  "select-one-admissible-v": {
+  "pick-admissible-edge": {
    "rule": "seeded",
    "seed": 0
   }

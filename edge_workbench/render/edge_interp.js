@@ -62,6 +62,10 @@ const EdgeInterp = (function () {
     "/": (a, b) => a / b,
     min: (a, b) => Math.min(a, b),
     max: (a, b) => Math.max(a, b),
+    // A unary written on a parenthesized expression, desugared as EDGE
+    // defines it (paper 5.5): a Map against 1, merge take-left, whose compute
+    // is the unary. The right operand is that 1 and is ignored.
+    floor: (a, b) => Math.floor(a),
     // The six comparisons, spelled as edge_ir/udf/builtins.py spells them.
     eq: (a, b) => a === b,
     ne: (a, b) => a !== b,
@@ -111,7 +115,11 @@ const EdgeInterp = (function () {
   const UNARY = {
     // Maps empty to NON-empty: an absent Boolean is false, so its negation is
     // true and present. Derives `not_left`.
-    not: { fn: (v, present) => !(present && v), mapsEmptyToEmpty: false },
+    // `not` yields a Boolean, whose empty value is false: where the result
+    // is false the point is ABSENT, exactly as a stored false would be. So
+    // S . not F :: <-(^) drops the coordinates F holds (exact cover's pop).
+    not: { fn: (v, present) => !(present && v), mapsEmptyToEmpty: false,
+           resultEmpty: false },
     // Maps empty to empty: floor fixes every integer, so it cannot manufacture
     // a value where the operand had none. Derives `take_left`.
     //
@@ -371,6 +379,30 @@ const EdgeInterp = (function () {
       };
     }
 
+    if (node.kind === "occupancy") {
+      // ||T||: the non-empty count of the fiber the projection names. The
+      // subscripts it gives (other than the generation, which the flat state
+      // already holds) fix a prefix; the ranks it leaves free are counted.
+      const tensor = node.operand.tensor;
+      const decl = ctx.decls[tensor];
+      const prefix = [];
+      node.operand.ranks.forEach((r, idx) => {
+        if (ctx.isGenRank(tensor, idx)) return;
+        prefix.push(String(r.kind === "var" ? bind[r.name] : Number(r.value)));
+      });
+      const t = ctx.state[ctx.stateName(tensor)] || {};
+      const empty = decl ? decl.empty_value : undefined;
+      const count = Object.keys(t).filter((k) => {
+        const parts = k.split(",");
+        return prefix.every((p, i) => parts[i] === p) && !isEmpty(t[k], empty);
+      }).length;
+      return {
+        present: true,
+        value: count,
+        prov: { op: "occupancy", tensor, present: true, value: count },
+      };
+    }
+
     if (node.kind === "unary") {
       const inner = evalNode(node.operand, bind, ctx, specs);
       const name = node.op && (node.op.symbol || node.op.name);
@@ -389,8 +421,12 @@ const EdgeInterp = (function () {
       // Reading `not`'s behaviour onto every unary -- which this did until
       // `floor` arrived -- makes floor(absent) present, and a stamped-stack
       // depth would materialise at coordinates holding no stamp.
-      const present = unary.mapsEmptyToEmpty ? inner.present : true;
-      const v = present ? unary.fn(inner.value, inner.present) : null;
+      let present = unary.mapsEmptyToEmpty ? inner.present : true;
+      let v = present ? unary.fn(inner.value, inner.present) : null;
+      if (present && "resultEmpty" in unary && v === unary.resultEmpty) {
+        present = false;
+        v = null;
+      }
       return {
         present,
         value: v,
@@ -508,8 +544,17 @@ const EdgeInterp = (function () {
   function evalEinsumNode(program, einsum, state, opts) {
     opts = opts || {};
     const ctx = makeCtx(program, state, opts);
+    // label -> the spec the BINARY node at that label evaluates by. When a
+    // label carries both a Map and a Reduce (`A . SelRow :: /\ <-(^) \/ ANY(u)`)
+    // the Map is the node's own merge and compute, and the Reduce folds the
+    // results at the Einsum level below. Keying by label alone let the Reduce
+    // overwrite the Map, the node then read as the reduce-over-a-placeholder
+    // shape, and its right operand was silently dropped -- every column of
+    // exact cover's E08 came out covered.
     const specs = {};
-    einsum.specs.forEach((s) => (specs[s.label] = s));
+    einsum.specs.forEach((s) => {
+      if (!specs[s.label] || s.kind === "map") specs[s.label] = s;
+    });
 
     // The iteration space is the union of the ranks the operands are read
     // over AND the output's own ranks. The output ranks matter on their own:

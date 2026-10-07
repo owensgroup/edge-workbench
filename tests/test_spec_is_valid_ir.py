@@ -32,7 +32,8 @@ JSON can make all four, so hand-edited JSON is what this rejects.
 WHAT IS CHECKED, FOR EVERY ALGORITHM
 ------------------------------------
 1. the committed program parses as IR (Layer 1, pydantic);
-2. it passes such Layer 2 checks as upstream ships (today: single assignment);
+2. it passes such Layer 2 checks as upstream ships -- single assignment, and
+   that every operator it names is one the registry can provide;
 3. it did not drift from whatever produces it -- a builder if the algorithm
    has one, upstream's copy if the program is vendored.
 
@@ -244,3 +245,91 @@ def test_program_matches_whatever_generates_it(spec: Path):
         f"    PYTHONPATH=$EDGE_IR_REPO python3 {builder.relative_to(ROOT)} "
         f"> {spec.relative_to(ROOT)}"
     )
+
+
+@pytest.mark.parametrize("spec", SPECS, ids=_ids(SPECS))
+def test_every_operator_the_spec_names_exists(spec: Path):
+    """Layer 2: no operator named that nothing implements.
+
+    This is the check whose absence let two name mistakes reach a running
+    cascade -- `ge`/`le`/`ne`, which were believed missing upstream and were
+    not, and `ANY`, whose Python function is `any_of` and whose registry name
+    is not. Both failed for the first time inside the evaluator, at a
+    coordinate, partway through a run.
+
+    The pass is registry-relative on purpose, so an algorithm supplying its
+    own functions is checked against those. Max-flow's populate names
+    `pick-admissible-edge`, which lives in the algorithm's own registry rather
+    than the builtins, so a check against the builtins alone would report it
+    falsely. Where an algorithm ships a
+    `*_functions.py` upstream, that registry is used.
+    """
+    _require_upstream()
+    from edge_ir.ir.program import Program
+    from edge_ir.udf.builtins import default_registry
+
+    try:
+        from edge_ir.validator import check_udf_names
+    except ImportError:
+        pytest.skip(
+            "this upstream has no UDF-name pass yet "
+            "(edge_ir.validator.check_udf_names)"
+        )
+
+    try:
+        program = Program.model_validate(json.loads(spec.read_text()))
+    except Exception:
+        pytest.skip("covered by test_program_parses_as_ir")
+
+    registry = default_registry()
+    alg_dir = _upstream_algorithm_dir(spec)
+    if alg_dir is not None:
+        registry = _registry_for(alg_dir) or registry
+
+    findings = check_udf_names(program, registry)
+    assert not findings, (
+        f"{spec.relative_to(ROOT)} names operators nothing implements:\n"
+        + "\n".join(f"  {f}" for f in findings)
+        + "\n\nEither the name is wrong, or the algorithm needs to register "
+        "an implementation for it."
+    )
+
+
+def _upstream_algorithm_dir(spec: Path) -> Path | None:
+    """Upstream's directory for this algorithm, if it ships one."""
+    name = spec.parent.parent.name
+    for rel in ("examples/algorithms", "test-algorithms"):
+        d = UPSTREAM / rel / name
+        if d.is_dir():
+            return d
+    return None
+
+
+def _registry_for(alg_dir: Path):
+    """The algorithm's own registry, if it ships a `*_functions.py`.
+
+    An algorithm that supplies operators of its own has to be checked against
+    them; checking it against the builtins would report its own functions as
+    missing, which is a false alarm that would teach people to ignore this.
+    """
+    mods = sorted(alg_dir.glob("*_functions.py"))
+    if not mods:
+        return None
+    if str(alg_dir) not in sys.path:
+        sys.path.insert(0, str(alg_dir))
+    import importlib
+
+    stem = mods[0].stem                      # e.g. "max_flow_functions"
+    mod = importlib.import_module(stem)
+
+    # Derive the expected name rather than scanning for `*_registry`. A scan
+    # finds `default_registry` first -- it is imported into these modules and
+    # sorts before the algorithm's own -- so the check would silently run
+    # against the builtins and report the algorithm's own functions missing.
+    preferred = stem.replace("_functions", "_registry")
+    if hasattr(mod, preferred):
+        return getattr(mod, preferred)()
+    for attr in sorted(dir(mod)):
+        if attr.endswith("_registry") and attr != "default_registry":
+            return getattr(mod, attr)()
+    return None

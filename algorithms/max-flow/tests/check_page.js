@@ -11,142 +11,17 @@
 // which this repository has none. That is deliberate and it is not circular:
 // this file is the RENDERING check, and the question it answers is whether
 // the DOM faithfully shows the data it was given. Whether that data is
-// correct is a different question, answered before the page is written, by
-// the coverage gate (the whole spec executed) and the algorithm's own
-// verifier (the answer is right).
-//
-//   node check_viz.js            # summary
-//   node check_viz.js -v         # list every check
-//
-// jsdom is a dev-only dependency; install it wherever you run this.
-
-const fs = require("fs");
-const path = require("path");
-const { JSDOM, VirtualConsole } = require("jsdom");
-
-const ALG = process.env.EDGE_WORKBENCH_ALG || path.basename(
-  path.join(__dirname, ".."));
-const ROOT = path.join(__dirname, "..", "..", "..");
-const BUILD = process.env.EDGE_WORKBENCH_OUT || path.join(ROOT, "build", ALG);
-const VERBOSE = process.argv.includes("-v");
-
-let pass = 0;
-const fails = [];
-function check(name, cond, detail) {
-  if (cond) {
-    pass++;
-    if (VERBOSE) console.log("  ok   " + name);
-  } else {
-    fails.push({ name, detail });
-    console.log("  FAIL " + name + (detail ? "  -- " + detail : ""));
-  }
-}
-
-const consoleErrors = [];
-const vc = new VirtualConsole();
-vc.on("jsdomError", (e) => consoleErrors.push(String(e.message)));
-vc.on("error", (...a) => consoleErrors.push(a.join(" ")));
-
-const html = fs.readFileSync(path.join(BUILD, "index.html"), "utf8");
-
-const dom = new JSDOM(html, {
-  runScripts: "dangerously",
-  virtualConsole: vc,
-  // MathJax is fetched from a CDN; the page already falls back to its own
-  // typeset() when MathJax is absent, which is the path exercised here.
-  resources: undefined,
-  pretendToBeVisual: true,
-});
-
-const { window } = dom;
-const doc = window.document;
-const $ = (id) => doc.getElementById(id);
-
-// The trace the page is rendering, read back OUT OF THE PAGE. Every expected
-// value below comes from here.
-//
-// Evaluated in the page's own global rather than read from `window.T`: the
-// page declares `const T=...` at script scope, and a top-level `const` goes
-// into the global lexical environment instead of becoming a property of
-// `window`. It is reachable by evaluating in that same global, which is what
-// this does.
-const trace = window.eval("typeof T !== 'undefined' ? T : null");
-if (!trace || !Array.isArray(trace.steps) || !trace.steps.length) {
-  console.error(
-    "the built page does not define a usable trace `T`, so there is nothing " +
-    "to check the DOM against. Did build_page.py rename the embedded trace?"
-  );
-  process.exit(1);
-}
-
-function textOf(el) {
-  return el ? el.textContent.trim() : null;
-}
-
-// The page renders infinities as glyphs, so compare on what it would print.
-function fmtNum(v) {
-  if (v === null || v === undefined) return "—";
-  if (v === Infinity) return "∞";
-  return String(v);
-}
-
-// The title is "<name><sup>ranks</sup>"; the rank superscript is not part of
-// the label under test, so strip it. Thin spaces in the generation label are
-// normalised to ordinary ones.
-function titleOf(t) {
-  return t.innerHTML
-    .split("<sup>")[0]
-    .replace(/<[^>]*>/g, "")
-    .replace(/[\u2009\u00a0]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// Read a rendered tensor block back out of the DOM.
-function readBlock(name) {
-  for (const b of doc.querySelectorAll(".tblock")) {
-    const t = b.querySelector(".tname");
-    if (t && titleOf(t) === name) return { el: b, label: titleOf(t), title: t };
-  }
-  return null;
-}
-
-// Operand cards are captioned "F" + <sub>1,u,v</sub>; the name is the leading
-// letters.
-function capName(card) {
-  const m = card.querySelector(".cap").textContent.trim().match(/^[A-Za-z]+/);
-  return m ? m[0] : "";
-}
-
-// The caption without its trailing empty-value tag, which every card carries.
-function capText(card) {
-  const c = card.querySelector(".cap").cloneNode(true);
-  [...c.querySelectorAll(".emp")].forEach((e) => e.remove());
-  return c.textContent.trim();
-}
-
-// The empty-value tag itself, e.g. "0", "+inf", "false" -- or "" when the
-// tensor is anonymous and has no declaration to read it from.
-function emptyTag(card) {
-  const e = card.querySelector(".cap .emp");
-  return e ? e.textContent.replace(/^∅\s*/, "").trim() : "";
-}
-
-function blockTitles() {
-  return [...doc.querySelectorAll(".tblock .tname")].map(titleOf);
-}
-
-setTimeout(() => {
-  try {
-    run();
-  } catch (e) {
-    console.log("\nEXCEPTION: " + e.stack);
-    process.exit(1);
-  }
-}, 300);
+const H = require("../../../tests/page_harness.js");
+const {
+  window, doc, $, trace, html,
+  N, RANGE, MID,
+  check, fails, consoleErrors,
+  stepIdx, textOf, fmtNum, titleOf, readBlock, capName, capText, emptyTag,
+  blockTitles,
+} = H;
 
 function run() {
-  console.log("checking index.html\n");
+  console.log(`checking ${process.env.EDGE_WORKBENCH_ALG || ""} index.html\n`);
 
   // ------------------------------------------------------------- structure
   check("page has a graph svg", !!$("g"));
@@ -164,20 +39,35 @@ function run() {
   const go = window.go;
   check("go() is exposed", typeof go === "function");
 
-  // A step whose output is stateful and which actually changes something:
-  // E24 writes D at i=7.
-  const idx = trace.steps.findIndex(
-    (s) => s.einsum === "E24" && s.iteration === 7
+  // A step whose output is stateful AND which actually changes something --
+  // FOUND, not named. This used to be "E24 at i=7", true only of the
+  // 6-vertex graph the instance used to hardcode. Now the instance comes from
+  // the tutorial's worked example, so an iteration number pinned here is a
+  // pin to one particular graph. Derived, it survives the tutorial changing.
+  const idx = (() => {
+    let prev = null;
+    for (let k = 0; k < trace.steps.length; k++) {
+      const s = trace.steps[k];
+      if (s.einsum !== "E24" || !s.iteration) continue;
+      const D = JSON.stringify(s.state.D || {});
+      if (prev !== null && D !== prev) return k;
+      prev = D;
+    }
+    return -1;
+  })();
+  check(
+    "found a relabel step: E24 where D changes",
+    idx > 0,
+    "idx=" + idx
   );
-  check("found E24 at i=7", idx > 0, "idx=" + idx);
 
   go(idx);
   const step = trace.steps[idx];
 
   check(
-    "iteration badge shows i = 7",
-    /i\s*=\s*7/.test(textOf($("itbadge"))),
-    textOf($("itbadge"))
+    "iteration badge shows this step's generation",
+    new RegExp("i\\s*=\\s*" + step.iteration).test(textOf($("itbadge"))),
+    textOf($("itbadge")) + " (want i = " + step.iteration + ")"
   );
   check(
     "step counter is right",
@@ -205,16 +95,18 @@ function run() {
 
   // ------------------------------------------------ after-view is the truth
   const dAfter = step.state.D;
-  const blk = readBlock("D (8)");
+  const genAfter = step.iteration + 1;   // E24 writes D_{i+1}
+  const genBefore = step.iteration;
+  const blk = readBlock(`D (${genAfter})`);
   check(
-    "D is labelled with its output generation, D (8)",
+    `D is labelled with its output generation, D (${genAfter})`,
     !!blk,
     "titles: " + blockTitles().filter((t) => t.startsWith("D")).join(" | ")
   );
   const cellsAfter = blk
     ? [...blk.el.querySelectorAll("td")].map((td) => td.textContent)
     : [];
-  const wantAfter = [0, 1, 2, 3, 4, 5].map((v) =>
+  const wantAfter = RANGE.map((v) =>
     dAfter[String(v)] === undefined ? "·" : String(dAfter[String(v)])
   );
   check(
@@ -244,9 +136,9 @@ function run() {
     "body gets showing-before",
     doc.body.classList.contains("showing-before")
   );
-  const blkB = readBlock("D (7)");
+  const blkB = readBlock(`D (${genBefore})`);
   check(
-    "D is relabelled to the prior generation, D (7)",
+    `D is relabelled to the prior generation, D (${genBefore})`,
     !!blkB,
     "titles: " + blockTitles().filter((t) => t.startsWith("D")).join(" | ")
   );
@@ -259,7 +151,7 @@ function run() {
   const cellsBefore = blkB
     ? [...blkB.el.querySelectorAll("td")].map((td) => td.textContent)
     : [];
-  const wantBefore = [0, 1, 2, 3, 4, 5].map((v) =>
+  const wantBefore = RANGE.map((v) =>
     dBefore[String(v)] === undefined ? "·" : String(dBefore[String(v)])
   );
   check(
@@ -269,8 +161,8 @@ function run() {
   );
   check(
     "banner names both generations",
-    /D<sub>7<\/sub>/.test($("beforebar").innerHTML) &&
-      /D<sub>8<\/sub>/.test($("beforebar").innerHTML),
+    new RegExp(`D<sub>${genBefore}</sub>`).test($("beforebar").innerHTML) &&
+      new RegExp(`D<sub>${genAfter}</sub>`).test($("beforebar").innerHTML),
     $("beforebar").textContent
   );
 
@@ -300,7 +192,8 @@ function run() {
   $("btog").onclick();
   check(
     "toggle releases back to the after view",
-    !doc.body.classList.contains("showing-before") && !!readBlock("D (8)")
+    !doc.body.classList.contains("showing-before") &&
+      !!readBlock(`D (${genAfter})`)
   );
 
   // Stepping resets the toggle.
@@ -313,7 +206,7 @@ function run() {
 
   // ------------------------------------------------------- intermediates
   const admIdx = trace.steps.findIndex(
-    (s) => s.einsum === "E09" && s.iteration === 7
+    (s) => s.einsum === "E09" && s.iteration === MID
   );
   go(admIdx);
   $("btog").onclick();
@@ -355,7 +248,8 @@ function run() {
   go(trace.steps.length - 1);
   check(
     "max flow appears on the last step",
-    /max flow = 23/.test(textOf($("flow"))),
+    new RegExp("max flow = " + (trace.headline ? trace.headline.value : ""))
+      .test(textOf($("flow"))),
     textOf($("flow"))
   );
   check(
@@ -376,10 +270,10 @@ function run() {
   // A rank-1 U tensor is drawn as a COLUMN so its cell for vertex u lines up
   // with row u of every U x V tensor next to it.
   go(idx);
-  const dBlk = readBlock("D (8)");
+  const dBlk = readBlock(`D (${genAfter})`);
   check(
     "rank-1 U tensor is drawn vertically",
-    dBlk.el.querySelectorAll("tr").length === 7 &&
+    dBlk.el.querySelectorAll("tr").length === N + 1 &&
       dBlk.el.querySelectorAll("tr")[1].querySelectorAll("td").length === 1,
     dBlk.el.querySelectorAll("tr").length + " rows"
   );
@@ -389,20 +283,20 @@ function run() {
     dBlk.el.querySelector("th.rk").textContent
   );
   check(
-    "cells stay in coordinate order 0..5 when read out",
+    `cells stay in coordinate order 0..${N - 1} when read out`,
     JSON.stringify(
       [...dBlk.el.querySelectorAll("td")].map((td) => td.dataset.coord)
-    ) === JSON.stringify(["0", "1", "2", "3", "4", "5"])
+    ) === JSON.stringify(RANGE)
   );
   const fBlk = readBlock("F");
   check(
     "rank-2 tensors are unchanged",
-    fBlk && fBlk.el.querySelectorAll("tr").length === 7 &&
-      fBlk.el.querySelectorAll("tr")[1].querySelectorAll("td").length === 6
+    fBlk && fBlk.el.querySelectorAll("tr").length === N + 1 &&
+      fBlk.el.querySelectorAll("tr")[1].querySelectorAll("td").length === N
   );
   // In the modal strip a 1-D operand must line up with the 2-D one beside it.
   go(
-    trace.steps.findIndex((s) => s.einsum === "E11" && s.iteration === 3)
+    stepIdx("E11", MID)
   );
   const eCardG = [...$("tstrip").querySelectorAll(".tcard")].find(
     (c) => capName(c) === "E"
@@ -420,7 +314,7 @@ function run() {
   );
   check(
     "1-D operand in the strip is a column too",
-    eCardG.querySelectorAll("tr").length === 7 &&
+    eCardG.querySelectorAll("tr").length === N + 1 &&
       eCardG.querySelectorAll("tr")[1].querySelectorAll("td").length === 1
   );
   check(
@@ -431,12 +325,15 @@ function run() {
   doc.onkeydown({ key: "Escape" });
 
   // ------------------------------------------- recomputed-but-unchanged
-  // E06 recomputes Act at the top of every round from an E that E19 already
-  // read, so from iteration 2 on it produces an identical tensor. The banner
-  // should say so rather than looking broken.
-  const actIdx = trace.steps.findIndex(
-    (s) => s.einsum === "E06" && s.iteration === 5
-  );
+  // A stateful tensor recomputed to the same value must SAY it is unchanged
+  // rather than look broken.
+  //
+  // This used to target E06 at iteration 5: E06 recomputed Act every round
+  // from an E that E19 had already read, so from round 2 it produced an
+  // identical tensor. That recomputation is gone -- E06 now seeds Act once at
+  // generation 1 -- so the check moves to E19 at iteration 1, where Act comes
+  // out unchanged because the first round's push left the active set alone.
+  const actIdx = stepIdx("E19", 1);
   go(actIdx);
   $("btog").onclick();
   check(
@@ -446,7 +343,7 @@ function run() {
   );
   check(
     "and still shows both generations",
-    !!readBlock("Act (4)"),
+    !!readBlock("Act (1)"),
     "titles: " + blockTitles().filter((t) => t.startsWith("Act")).join(" | ")
   );
   go(actIdx);
@@ -504,7 +401,7 @@ function run() {
   const blockEmpty = () => {
     const out = {};
     [...doc.querySelectorAll(".tblock")].forEach((b) => {
-      // The output block is labelled "D (8)" -- the generation is display
+      // The output block is labelled "D (n)" -- the generation is display
       // only; the empty value belongs to the tensor, not the generation.
       const nm = (titleOf(b.querySelector(".tname")).match(/^[A-Za-z]+/) ||
         [""])[0];
@@ -628,7 +525,7 @@ function run() {
   check(
     "selecting another output coord moves the line",
     Object.keys(litCols).length === 1 &&
-      litCols[Number(otherCoord)] === 6,
+      litCols[Number(otherCoord)] === N,
     "coord " + otherCoord + " lit per column: " + JSON.stringify(litCols)
   );
 
@@ -679,17 +576,17 @@ function run() {
         })
       );
       const k = Object.keys(cols);
-      return k.length === 1 && cols[k[0]] === 6;
+      return k.length === 1 && cols[k[0]] === N;
     })(),
-    "expected all six lit cells in one column"
+    `expected all ${N} lit cells in one column`
   );
   // A reduction reads a whole line out of its operand, and that line should
   // be lit -- the same line that collapses in the iteration space.
   const reads = $("tstrip").querySelectorAll(".mini td.rd").length;
   check(
     "reduction lights the whole line it reads from the operand",
-    reads === 6,
-    reads + " cells lit (expected 6)"
+    reads === N,
+    reads + " cells lit (expected " + N + ")"
   );
   check(
     "exactly one cell is marked as written",
@@ -702,9 +599,7 @@ function run() {
   //     F_{i+1,u,v} = (F ·1 delta_{i,u,v}) ·2 delta_{i,v,u}
   // so it is the case that proves the caption records the ACCESS while the
   // grid keeps the tensor's own layout.
-  const e12 = trace.steps.findIndex(
-    (s) => s.einsum === "E12" && s.iteration === 3
-  );
+  const e12 = stepIdx("E12", MID);
   go(e12);
   const e12Cards = [...$("tstrip").querySelectorAll(".tcard")].filter(
     (c) => capName(c) === "delta"
@@ -723,7 +618,7 @@ function run() {
 
   // Same labelling inside the execution panel, where the reader is looking
   // at one Einsum's operands rather than the whole state.
-  go(trace.steps.findIndex((s) => s.einsum === "E21" && s.iteration === 3));
+  go(stepIdx("E21", MID));
   const e21 = [...$("tstrip").querySelectorAll(".tcard")];
   check(
     "operand cards carry the empty value too",
@@ -739,7 +634,7 @@ function run() {
   // Anonymous intermediates have no declaration, so there is no declared
   // empty value to show -- and inventing one would be a claim the IR does
   // not make.
-  go(trace.steps.findIndex((s) => s.einsum === "E06" && s.iteration === 3));
+  go(stepIdx("E06"));
   check(
     "an anonymous intermediate claims no empty value",
     [...$("tstrip").querySelectorAll(".tcard.inter")].every(
@@ -793,13 +688,13 @@ function run() {
     "lit column of F and written cell of E should share a position"
   );
 
-  go(trace.steps.findIndex((s) => s.einsum === "E13" && s.iteration === 3));
+  go(stepIdx("E13", MID));
   check(
     "E13: InPush is ACROSS -- same shape of reduction as E03",
     shapeOf(cardNamed("InPush")) === "ACROSS",
     shapeOf(cardNamed("InPush"))
   );
-  go(trace.steps.findIndex((s) => s.einsum === "E14" && s.iteration === 3));
+  go(stepIdx("E14", MID));
   check(
     "E14: OutPush is DOWN -- it reduces the other end, so its variable is u",
     shapeOf(cardNamed("OutPush")) === "DOWN",
@@ -807,7 +702,7 @@ function run() {
   );
   // The same tensor, drawn differently in two Einsums, is the point rather
   // than a bug: E13 writes InPush_{i,v}, E15 reads InPush_{i,u}.
-  go(trace.steps.findIndex((s) => s.einsum === "E15" && s.iteration === 3));
+  go(stepIdx("E15", MID));
   check(
     "E15: InPush is DOWN here, because this Einsum walks it with u",
     shapeOf(cardNamed("InPush")) === "DOWN",
@@ -828,9 +723,8 @@ function run() {
   );
 
   // --- intermediates: parenthesised sub-expressions get their own grid.
-  const e06 = trace.steps.findIndex(
-    (s) => s.einsum === "E06" && s.iteration === 3
-  );
+  // E06 runs once, as the seed for Act, so it has no iteration to match on.
+  const e06 = stepIdx("E06");
   go(e06);
   const allCards = () => [...$("tstrip").querySelectorAll(".tcard")];
   const inters = () => allCards().filter((c) => c.classList.contains("inter"));
@@ -841,7 +735,7 @@ function run() {
   );
   check(
     "the step is captioned with the sub-expression and its rank binding",
-    /^\(E > 0\)3,u$/.test(inters()[0].querySelector(".cap").textContent.trim()),
+    /^\(E > 0\)1,u$/.test(inters()[0].querySelector(".cap").textContent.trim()),
     inters()[0].querySelector(".cap").textContent
   );
   check(
@@ -878,7 +772,7 @@ function run() {
   // Merged into one card they would light two cells at once and the caption
   // could only name one of them, which reads like a highlight that never
   // cleared. They get a card each.
-  go(trace.steps.findIndex((s) => s.einsum === "E08" && s.iteration === 1));
+  go(stepIdx("E08", 1));
   const dCards = () =>
     allCards().filter((c) => capName(c) === "D");
   check(
@@ -895,28 +789,36 @@ function run() {
     [...card.querySelectorAll("td")]
       .map((td, i) => (td.classList.contains("rd") ? i : -1))
       .filter((i) => i >= 0);
+  const pickCoords = () =>
+    [...$("tstrip").querySelectorAll(".tcard.out td.pick")]
+      .map((td) => td.dataset.coord)
+      .filter((c) => c && c.includes(","));
   const pick = (k) =>
     [...$("tstrip").querySelectorAll(".tcard.out td.pick")]
       .find((td) => td.dataset.coord === k)
       .onclick();
-  pick("2,5");
-  check(
-    "each card lights only its own coordinate",
-    JSON.stringify(litIn(dCards()[0])) === JSON.stringify([2]) &&
-      JSON.stringify(litIn(dCards()[1])) === JSON.stringify([5]),
-    "u-card " + litIn(dCards()[0]) + "  v-card " + litIn(dCards()[1])
-  );
-  pick("0,3");
-  check(
-    "and both follow the selection",
-    JSON.stringify(litIn(dCards()[0])) === JSON.stringify([0]) &&
-      JSON.stringify(litIn(dCards()[1])) === JSON.stringify([3]),
-    "u-card " + litIn(dCards()[0]) + "  v-card " + litIn(dCards()[1])
-  );
+  // Two coordinates that EXIST, taken from the grid. These were "2,5" and
+  // "0,3", which named vertex 5 -- fine while the instance was a fixed
+  // 6-vertex graph, out of range for the tutorial's 4-vertex one.
+  const coords = pickCoords();
+  check("the output grid offers coordinates to pick", coords.length >= 2,
+        coords.length + " pickable");
+  [coords[0], coords[coords.length - 1]].forEach((c, nth) => {
+    const [cu, cv] = c.split(",").map(Number);
+    pick(c);
+    check(
+      nth === 0
+        ? "each card lights only its own coordinate"
+        : "and both follow the selection",
+      JSON.stringify(litIn(dCards()[0])) === JSON.stringify([cu]) &&
+        JSON.stringify(litIn(dCards()[1])) === JSON.stringify([cv]),
+      `coord ${c}: u-card ${litIn(dCards()[0])}  v-card ${litIn(dCards()[1])}`
+    );
+  });
   doc.onkeydown({ key: "Escape" });
 
   // A two-operator map has one intermediate; a plain one-operator map has none.
-  go(trace.steps.findIndex((s) => s.einsum === "E09" && s.iteration === 3));
+  go(stepIdx("E09", MID));
   check(
     "a single-operator einsum shows no intermediate step",
     inters().length === 0,
@@ -925,9 +827,7 @@ function run() {
   doc.onkeydown({ key: "Escape" });
 
   // --- E08: a two-label map with a truth table. Lbl = D ==(int) (D+1).
-  const e08 = trace.steps.findIndex(
-    (s) => s.einsum === "E08" && s.iteration === 3
-  );
+  const e08 = stepIdx("E08", MID);
   go(e08);
   const derivCards = $("pbody").querySelectorAll(".step").length;
   check(
@@ -952,9 +852,7 @@ function run() {
   doc.onkeydown({ key: "Escape" });
 
   // --- E11: three operands, so the strip should show all three plus output.
-  const e11 = trace.steps.findIndex(
-    (s) => s.einsum === "E11" && s.iteration === 3
-  );
+  const e11 = stepIdx("E11", MID);
   go(e11);
   // Operand cards only: intermediates are steps, not inputs.
   const opCards = () =>
@@ -1012,7 +910,10 @@ function run() {
   // The output card doubles as the picker.
   const outCard = cards().slice(-1)[0];
   const pickable = [...outCard.querySelectorAll("td.pick")];
-  check("output cells are pickable", pickable.length === 36, pickable.length + "");
+  // Every cell of a U x V output, so N*N -- 36 while the instance was a fixed
+  // 6-vertex graph, 16 for the tutorial's 4-vertex one.
+  check("output cells are pickable", pickable.length === N * N,
+        pickable.length + " (expected " + N * N + ")");
   const target = pickable.find(
     (td) => td.dataset.coord !== outCard.querySelector("td.wr").dataset.coord
   );
@@ -1032,7 +933,7 @@ function run() {
 
   // --- Cell click as the second entry point, on E24 (writes D).
   go(idx);
-  const dblk = readBlock("D (8)");
+  const dblk = readBlock(`D (${genAfter})`);
   const dcell = dblk.el.querySelector("td[data-coord]");
   check("output cells carry a coordinate", !!dcell && !!dcell.dataset.coord);
   check("output cells are clickable", typeof dcell.onclick === "function");
@@ -1071,9 +972,7 @@ function run() {
   check("execution panel is off on the stop step", off());
 
   // --- E10: the selector. Expandable, but must be honest about the choice.
-  const e10 = trace.steps.findIndex(
-    (s) => s.einsum === "E10" && s.iteration === 3
-  );
+  const e10 = stepIdx("E10", MID);
   go(e10);
   check("execution panel is live on the selector", !$("execpanel").classList.contains("off"));
   check(
@@ -1143,6 +1042,7 @@ function run() {
     realErrors.slice(0, 3).join(" | ")
   );
 
-  console.log(`\n${pass} passed, ${fails.length} failed`);
-  process.exit(fails.length ? 1 : 0);
+  H.report();
 }
+
+setTimeout(run, 0);

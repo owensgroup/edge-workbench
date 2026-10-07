@@ -17,6 +17,21 @@ open build/max-flow/index.html
 `node` and Python 3.10+. Nothing else: the IR is vendored, so a clean clone
 builds without a sibling checkout.
 
+## Checking your own tutorial
+
+Write three files in one directory -- the tutorial `.md`, its cascade as
+`einsum.edge`, and a `verifier.py` -- then run
+
+```
+python3 -m edge_workbench check path/to/that/directory
+```
+
+as many times as it takes. Each run lists every problem it found and what to
+do next; two steps ask you to paste a prompt into a chat and save the reply.
+When everything passes, `index.html` is written beside your files.
+
+**[AUTHORING.md](AUTHORING.md) is the step-by-step guide.**
+
 ## Gates
 
 Two run before the page is written, and there is no flag to skip them.

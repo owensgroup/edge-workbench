@@ -48,6 +48,8 @@ def generic_highlight(changed: dict) -> dict:
     """
     nodes, edges = [], []
     for coord in changed:
+        if coord == "":
+            continue          # a rank-0 tensor (a flag, a depth): no place to light
         parts = coord.split(",")
         if len(parts) == 1:
             nodes.append(int(parts[0]))
@@ -81,8 +83,15 @@ def _fmt(v: Any) -> str:
     return str(v)
 
 
-def annotate(trace: dict, meta: Any, view: Any = None) -> dict:
-    """Add caption, highlight and display metadata to every step, in place."""
+def annotate(trace: dict, meta: Any, view: Any = None,
+             latex: dict | None = None) -> dict:
+    """Add caption, highlight and display metadata to every step, in place.
+
+    `latex` is label -> formula, rendered from the IR by
+    `edge_workbench.render.latex`. It is passed in rather than read off the
+    algorithm's `meta` module because a formula that a human types next to a
+    program is a formula that can contradict it.
+    """
     steps = trace["steps"]
     prev = None
     for step in steps:
@@ -90,7 +99,7 @@ def annotate(trace: dict, meta: Any, view: Any = None) -> dict:
         out = step.get("output")
         changed = changed_cells(step["state"], prev, out) if out else {}
 
-        step["latex"] = getattr(meta, "LATEX", {}).get(label, "")
+        step["latex"] = (latex or {}).get(label, "")
         graph_meaning, einsum_meaning = (
             getattr(meta, "MEANING", {}).get(label) or ("", ""))
         step["graphMeaning"] = graph_meaning

@@ -1,0 +1,10 @@
+# Everything `python3 -m edge_workbench check` regenerates. What is kept is
+# what an author and the two model steps supply.
+*/index.html
+*/workbench/build/
+*/workbench/prompts/
+*/workbench/replies/
+*/workbench/spec/*_program.json
+*/workbench/spec/cascade.json
+*/workbench/spec/instance.json
+*/workbench/spec/meta.py

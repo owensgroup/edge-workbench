@@ -15,21 +15,33 @@
   "and it is what upstream's bfs, dfs, bellman-ford and label-propagation do."
  ],
  "singleAssignment": {
-  "tensors": ["Act", "D", "E", "F", "R"],
+  "tensors": [
+   "Act",
+   "D",
+   "E",
+   "F",
+   "R"
+  ],
   "why": [
    "Three of the five are workarounds for IR features that do not exist yet,",
    "not mistakes in the algorithm:",
    "",
-   "  F, E, R, D -- initialization runs INSIDE the cascade, writing a literal",
-   "    generation 1 that the loop then writes again at i+1. The validator",
+   "  F, E, R, D, Act -- a SEED written inside the cascade at a literal",
+   "    generation 1, which the loop then writes again at i+1. The validator",
    "    reports it because an iterative rank passes through the constant.",
+   "",
+   "    Act joined this group on 2026-09. It used to be the other kind: E06",
+   "    wrote Act_i every round and E19 wrote Act_{i+1}, so round i and round",
+   "    i+1 wrote the same slice with neither being a seed -- and E06 was",
+   "    recomputing what E19 had already written, identically, on every",
+   "    comparable round. E06 is now pinned to generation 1 and seeds the",
+   "    loop. The finding did not disappear, but it changed class, and 11",
+   "    redundant Einsum executions did disappear.",
    "",
    "  R -- E04 is a three-arm `cases`, and a lowered `cases` is three IR nodes",
    "    writing the same slice in order, each overwriting the last. That",
    "    ordering is what makes the u=s arm win. A later arm computing its",
    "    output's empty value cannot clear what an earlier arm wrote.",
-   "",
-   "  Act -- written once by the push step and once by the relabel step.",
    "",
    "Fixing the cascade should shrink this list, and this file should shrink",
    "with it."

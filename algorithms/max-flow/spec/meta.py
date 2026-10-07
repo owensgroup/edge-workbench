@@ -1,127 +1,54 @@
 # -*- coding: utf-8 -*-
 # per-Einsum explanations: what it means on the graph, and what it means in the iteration space
-MEANING = {
-"init":("Set up the starting state: no flow, no excess, every distance 0 except the source at |V|.",
-       "Sets the first generation of each tensor. S and T are one-hot over u."),
-"E01":("Saturate every edge leaving the source: u = s, all destinations v.",
-       "For a point (u,v) of FS, take S at u and C at (u,v). ∩ keeps only points where both exist, so only the u = s row survives."),
-"E02":("Record positive flow to the neighbours of the source, and the matching negative flow on the reverse edges.",
-       "For a point (u,v) of F, take FS at (u,v) and subtract FS at (v,u)."),
-"E03":("Excess at each vertex is what arrived minus what left.",
-       "Reduce over rank u: for each v, sum F at all points (u,v)."),
-"E04":("Build the residual graph: source edges are saturated, reverse edges back to the source open up.",
-       "For a point (u,v) of R, three disjoint cases choose the value."),
-"E05":("Mark the internal vertices — only they may hold excess.",
-       "For a point u of NST, keep it where both ¬S and ¬T exist."),
-"E06":("A vertex is active if it is internal and is holding excess.",
-       "For a point u of Act, compare E at u against 0 and keep it only where E > 0, then intersect with NST and take NST's boolean."),
-"E07":("Keep the residual edges (u,v) whose source u is an active vertex.",
-       "For a point (u,v) of ActR, take Act at u and R at (u,v). ∩ keeps points where both exist, and takes Act's boolean."),
-"E08":("An edge (u,v) is downhill when d(u) = d(v) + 1.",
-       "For a point (u,v) of Lbl, compare D at u against D at v plus 1, keeping it only where they are equal."),
-"E09":("Admissible edge (u,v): source u is active, the edge has residual capacity, and it runs downhill.",
-       "For a point (u,v) of Adm, keep it where both ActR and Lbl exist."),
-"E10":("Each active vertex u picks exactly one destination v to push along.",
-       "For each u, the coordinate operator keeps one point (u,v) and drops the rest of that u-row."),
-"E11":("Send min(excess at u, residual on (u,v)) along the chosen edge.",
-       "For a point (u,v) of delta, take the min of E at u and R at (u,v), then ∩ with PushCand keeps only the one selected point per u."),
-"E12":("Add the flow forward and subtract it on the reverse edge.",
-       "For a point (u,v) of F, add delta at (u,v) and subtract delta at (v,u)."),
-"E13":("Total flow arriving at each vertex this step.",
-       "Reduce over rank u: for each v, sum delta at all points (u,v)."),
-"E14":("Total flow leaving each vertex this step.",
-       "Reduce over rank v: for each u, sum delta at all points (u,v)."),
-"E15":("Excess gains what arrived and loses what left.",
-       "For a point u of E, add InPush at u and subtract OutPush at u."),
-"E16":("Forward residual shrinks, reverse residual grows — this is what lets flow be undone later.",
-       "For a point (u,v) of R, subtract delta at (u,v) and add delta at (v,u)."),
-"E17":("Which edges are still admissible now that the push has happened.",
-       "For a point (u,v) of Adm, take R at (u,v) and Lbl at (u,v). ∩ keeps points where both exist, and takes Lbl's boolean."),
-"E18":("Does this vertex still have somewhere to push?",
-       "Reduce over rank v: for each u, OR Adm at all points (u,v)."),
-"E19":("Recompute the active set against the new excess.",
-       "For a point u of Act, the same as E06 but on generation i+1."),
-"E20":("A vertex that still holds excess but has nowhere to push must relabel.",
-       "For a point u of Rel, keep it where Act exists and HasAdm does not."),
-"E21":("Collect the distances of the residual neighbours v of each relabelling vertex u.",
-       "For a point (u,v) of NeiLbl, keep it where R at (u,v) and Rel at u both exist, and take D at v as the value."),
-"E22":("The lowest neighbour distance, per relabelling vertex u.",
-       "Reduce over rank v: for each u, take the min of NeiLbl at all points (u,v)."),
-"E23":("New distance for u is one above its lowest neighbour v.",
-       "For a point u of NewD, add 1 to MinNeiLbl at u."),
-"E24":("Apply the new distances; every other vertex keeps the one it had.",
-       "For a point u of D, take NewD at u where it exists, otherwise keep D at u."),
-"stop":("No vertex is holding excess any more, so the flow is maximum.",
-       "Count the non-empty points in Act. Stop when there are none."),
-}
+# MEANING used to live here: two sentences per Einsum, one saying what it
+# means for the problem and one restating what it does over its iteration
+# space. Both are gone.
+#
+# The first now lives in the tutorial's `einsum_meanings` block -- the author
+# writes it, and the build fails when an Einsum has none. The second is
+# GENERATED from the IR by edge_workbench/render/action_prose.py, because the
+# program already determines which ranks reduce, which merge decides where a
+# value exists and which compute combines the operands; restating that by hand
+# was 26 paragraphs that nothing checked.
 
-RANKNAMES = {"C":["U","V"],"G":["U","V"],"F":["U","V"],"FS":["U","V"],"R":["U","V"],
- "Lbl":["U","V"],"ActR":["U","V"],"Adm":["U","V"],"PushCand":["U","V"],"delta":["U","V"],
- "NeiLbl":["U","V"],"E":["U"],"D":["U"],"Act":["U"],"NST":["U"],"S":["U"],"T":["U"],
- "HasAdm":["U"],"Rel":["U"],"NewD":["U"],"MinNeiLbl":["U"],"InPush":["U"],"OutPush":["U"]}
 
-GENERATIONAL = {"F","R","E","D","Act","ActR","Lbl","Adm","PushCand","delta","NeiLbl",
-                "HasAdm","Rel","NewD","MinNeiLbl","InPush","OutPush","FS"}
 
-DESC = {
- "C":"«C = Capacity»  Edge capacity. Static input, never changes.",
- "S":"«S = Source»  One-hot marker for the source vertex.",
- "T":"«T = Sink»  One-hot marker for the sink vertex.",
- "NST":"«NST = Not Source, not Sink»  Internal vertices — neither source nor sink. Only these can be active.",
- "F":"«F = Flow»  Current flow on each edge. Antisymmetric: F(v,u) = −F(u,v), so a negative entry means flow runs the other way.",
- "R":"«R = Residual»  Residual capacity — how much more can still be sent along (u,v). A saturated edge equals the empty value and disappears.",
- "E":"«E = Excess»  Excess held at each vertex. Positive means it still has flow to push onward.",
- "D":"«D = Distance»  Distance (label). Flow may only move u→v when D(u) = D(v)+1. Empty value is +∞ because 0 is a legal distance.",
- "Act":"«Act = Active»  Internal vertices currently holding excess. Recomputed before and after the push.",
- "FS":"«FS = Flow from Source»  The preflow leaving the source, before it is mirrored into the antisymmetric F.",
- "ActR":"«ActR = Active + Residual»  Residual edges that leave an active vertex.",
- "Lbl":"«Lbl = Label (distance rule)»  Edges satisfying the distance rule D(u) = D(v)+1.",
- "Adm":"«Adm = Admissible»  Admissible edges: active source, residual capacity, and downhill.",
- "PushCand":"«PushCand = Push Candidate»  The single edge each vertex will actually push along, chosen by the populate action.",
- "delta":"«δ (delta) = amount pushed»  Amount of flow pushed on each selected edge this step.",
- "InPush":"«InPush = Inbound Push»  Flow arriving at each vertex this step.",
- "OutPush":"«OutPush = Outbound Push»  Flow leaving each vertex this step.",
- "HasAdm":"«HasAdm = Has Admissible edge»  Whether a vertex still has an admissible edge after the push.",
- "Rel":"«Rel = Relabel set»  Vertices that must relabel: still active, nowhere to push.",
- "NeiLbl":"«NeiLbl = Neighbour Labels»  Distances of the residual neighbours, for relabelling vertices only.",
- "MinNeiLbl":"«MinNeiLbl = Minimum Neighbour Label»  Lowest neighbour distance for each relabelling vertex.",
- "NewD":"«NewD = New Distance»  The new distance: lowest neighbour + 1.",
-}
+# RANKNAMES, GENERATIONAL and STATEFUL used to live here: three lists saying
+# which ranks each tensor is drawn over, which carry a generational rank, and
+# which are loop-carried state. All three are DERIVED now, by
+# edge_workbench/tensor_facts.py, from the declarations and the cascade's
+# generation pattern -- and verified to reproduce these lists exactly.
+#
+# GENERATIONAL turned out to be read by nothing at all; the page's
+# "Generational tensors" panel is driven by GROUPS below.
+
+# DESC used to live here: one line per tensor, shown beside its grid. Gone,
+# and it split in two on the way out.
+#
+# The author's sentence comes from the TUTORIAL -- `problem_statement` for the
+# tensors the problem has, and a `tensor_notes` block for the cascade
+# intermediates, which the problem statement does not declare because they are
+# not part of the problem. The provenance after it is DERIVED by
+# edge_workbench/render/tensor_notes.py: which Einsum writes the tensor and
+# which read it. That half was never written down anywhere, and for an
+# intermediate it is most of what a reader wants to know.
 
 # LaTeX form of each Einsum, matching the notebook's typesetting
-LATEX = {
-"init": r"F_{i\equiv 0,u,v}=0,\quad E_{i\equiv 0,u}=0,\quad D_{i\equiv 1,u}=0,\quad D_{i\equiv 1,u:u=s}=|V|,\quad S_{u:u=s},\quad T_{u:u=t}",
-"E01": r"\mathit{FS}_{i\equiv 1,u,v} = S_u \cdot C_{u,v} \;::\; \bigwedge *(\cap)",
-"E02": r"F_{i\equiv 1,u,v} = \mathit{FS}_{i\equiv 1,u,v} \cdot \mathit{FS}_{i\equiv 1,v,u} \;::\; \bigwedge -(\cup)",
-"E03": r"E_{i\equiv 1,v} = F_{i\equiv 1,u,v} \;::\; \bigvee +(\cup)",
-"E04": r"R_{i\equiv 1,u,v} = \begin{cases} 0 & u = s \\ C_{v,u} & v = s \,\wedge\, u \neq s \\ C_{u,v} & \text{otherwise} \end{cases}",
-"E05": r"\mathit{NST}_u = \neg S_u \cdot \neg T_u \;::\; \bigwedge \text{AND}(\cap)",
-"E06": r"\mathit{Act}_{i,u} = \mathit{NST}_u \cdot^1 (E_{i,u} \cdot^2 0)_{i,u} \;::\; \bigwedge\nolimits^1 \leftarrow(\cap)\;\; \bigwedge\nolimits^2 >(\cap)",
-"E07": r"\mathit{ActR}_{i,u,v} = \mathit{Act}_{i,u} \cdot R_{i,u,v} \;::\; \bigwedge \leftarrow(\cap)",
-"E08": r"\mathit{Lbl}_{i,u,v} = D_{i,u} \cdot (D_{i,v} + 1)_{i,v} \;::\; \bigwedge \equiv(\cap)",
-"E09": r"\mathit{Adm}_{i,u,v} = \mathit{ActR}_{i,u,v} \cdot \mathit{Lbl}_{i,u,v} \;::\; \bigwedge \text{AND}(\cap)",
-"E10": r"\mathit{PushCand}_{i,u,v^*} = \mathit{Adm}_{i,u,v} \lll_{v^*} \mathbf{1}(\text{pick-admissible-edge})",
-"E11": r"\delta_{i,u,v} = (E_{i,u} \cdot^1 R_{i,u,v})_{i,u,v} \cdot^2 \mathit{PushCand}_{i,u,v} \;::\; \bigwedge\nolimits^1 \min(\cap)\;\; \bigwedge\nolimits^2 \leftarrow(\cap)",
-"E12": r"F_{i+1,u,v} = (F_{i,u,v} \cdot^1 \delta_{i,u,v})_{i,u,v} \cdot^2 \delta_{i,v,u} \;::\; \bigwedge\nolimits^1 +(\cup)\;\; \bigwedge\nolimits^2 -(\cup)",
-"E13": r"\mathit{InPush}_{i,v} = \delta_{i,u,v} \;::\; \bigvee +(\cup)",
-"E14": r"\mathit{OutPush}_{i,u} = \delta_{i,u,v} \;::\; \bigvee +(\cup)",
-"E15": r"E_{i+1,u} = (E_{i,u} \cdot^1 \mathit{InPush}_{i,u})_{i,u} \cdot^2 \mathit{OutPush}_{i,u} \;::\; \bigwedge\nolimits^1 +(\cup)\;\; \bigwedge\nolimits^2 -(\cup)",
-"E16": r"R_{i+1,u,v} = (R_{i,u,v} \cdot^1 \delta_{i,u,v})_{i,u,v} \cdot^2 \delta_{i,v,u} \;::\; \bigwedge\nolimits^1 -(\cup)\;\; \bigwedge\nolimits^2 +(\cup)",
-"E17": r"\mathit{Adm}_{i+1,u,v} = R_{i+1,u,v} \cdot \mathit{Lbl}_{i,u,v} \;::\; \bigwedge \rightarrow(\cap)",
-"E18": r"\mathit{HasAdm}_{i+1,u} = \mathit{Adm}_{i+1,u,v} \;::\; \bigvee \text{OR}(\cup)",
-"E19": r"\mathit{Act}_{i+1,u} = \mathit{NST}_u \cdot^1 (E_{i+1,u} \cdot^2 0)_{i+1,u} \;::\; \bigwedge\nolimits^1 \leftarrow(\cap)\;\; \bigwedge\nolimits^2 >(\cap)",
-"E20": r"\mathit{Rel}_{i+1,u} = \mathit{Act}_{i+1,u} \cdot \neg \mathit{HasAdm}_{i+1,u} \;::\; \bigwedge \text{AND}(\cap)",
-"E21": r"\mathit{NeiLbl}_{i,u,v} = (R_{i+1,u,v} \cdot^1 \mathit{Rel}_{i+1,u})_{i,u,v} \cdot^2 D_{i,v} \;::\; \bigwedge\nolimits^1 \leftarrow(\cap)\;\; \bigwedge\nolimits^2 \rightarrow(\cap)",
-"E22": r"\mathit{MinNeiLbl}_{i,u} = \mathit{NeiLbl}_{i,u,v} \;::\; \bigvee \min(\cup)",
-"E23": r"\mathit{NewD}_{i,u} = (\mathit{MinNeiLbl}_{i,u} \cdot 1)_{i,u} \;::\; \bigwedge +(\cap)",
-"E24": r"D_{i+1,u} = D_{i,u} \cdot \mathit{NewD}_{i,u} \;::\; \bigwedge \mathbin{<\!\!<}(\cup)",
-"stop": r"\diamond \,:\; \lVert \mathit{Act}_{i+1} \rVert \equiv 0",
-}
+# LATEX used to live here: one hand-transcribed formula per Einsum, shown
+# above each step. It is now rendered from the IR by
+# edge_workbench/render/latex.py, because nothing could check a transcription
+# and it turned out to be wrong in four places -- it showed `Adm` for an
+# Einsum that writes `AdmPost` (the spec has since adopted that name), named
+# E10's compute operator where the
+# deciding coordinate operator belongs, dropped one of E08's two labelled Map
+# specs, and claimed initialization assigns S and T, which it does not.
+#
+# MEANING and DESC below are still prose, and still unchecked. They are
+# editorial -- what an Einsum is FOR -- which nothing can derive.
 
 # Tensors that carry a value from one generation to the next, as opposed to
 # scratch recomputed inside a round. The before/after toggle can step back
 # through these; for anything else "before" is the empty tensor.
-STATEFUL = {"E", "D", "Act", "F", "R"}
 
 # Which tensors get a permanent grid, and where. Intermediates are
 # deliberately absent: they exist for one Einsum, and the execution panel

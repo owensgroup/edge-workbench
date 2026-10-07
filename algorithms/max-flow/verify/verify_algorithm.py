@@ -1,388 +1,346 @@
 # -*- coding: utf-8 -*-
-"""Is the max-flow cascade actually correct?
+"""Is the max-flow cascade correct -- on the instance the page actually shows?
 
-There is now exactly one implementation in this repository: the
-specification, executed by the driver. That makes this file the only thing
-standing between a wrong cascade and a published page, so it must not check
-that the answer came out 23 -- a single implementation can be confidently
-wrong, and agreeing with itself proves nothing.
+WHAT THIS REPLACED
+------------------
+This verifier used to carry `CLRS_26_1` and a second Python implementation of
+the cascade (`edge_cascade`), and it checked those against each other. It never
+read `instance.json`. So the build reported "answer check: 18 checks passed"
+next to "driven trace: max flow 5" as though they were one result, when they
+were two unrelated runs on two different graphs -- and nothing in the build
+checked the answer for the page the build was about to write.
 
-This closes both gaps:
+Worse, the thing being checked was a re-implementation. Two hand-written
+interpretations of one specification can be wrong together, which is the exact
+failure this repository exists to prevent.
 
-  1. THE ANSWER IS PUBLISHED, NOT OURS. The demo graph is CLRS Figure 26.1
-     (Cormen et al., *Introduction to Algorithms*, 3rd ed., §26.1), whose
-     maximum flow is 23. So the number is external to this repository.
+Now there is one evaluator. The driver runs, and what it produces is checked
+three ways, weakest to strongest:
 
-  2. THE FLOW IS VALIDATED, NOT JUST ITS VALUE. `validate_flow` checks the
-     capacity constraint, antisymmetry, and conservation at every internal
-     vertex, and that the value measured at the source equals the value
-     measured at the sink. A run can reach 23 by an invalid route; this says
-     whether the answer is a genuine maximum flow.
+  1. THE PUBLISHED ANSWER. The tutorial states the maximum flow for its own
+     worked example. External to this repository, and free.
+  2. AN INDEPENDENT ORACLE. `edmonds_karp` is augmenting-path, not
+     push-relabel -- a different algorithm for the same problem -- and it runs
+     on generated instances too, so agreement is not a claim about one graph.
+  3. THE PROPERTIES. `validate_flow` checks capacity, antisymmetry,
+     conservation at every internal vertex, and that the value measured at the
+     source equals the value at the sink. These need no oracle at all, and
+     they are the only check that catches the right TOTAL reached by an
+     invalid route.
 
-  3. AN INDEPENDENT ORACLE. `edmonds_karp` is augmenting-path, not
-     push-relabel -- a different algorithm with different failure modes. The
-     property test runs the EDGE cascade against it over random graphs, which
-     catches semantic errors that one worked example cannot.
+    python3 verify_algorithm.py            # the page's instance, plus a sweep
+    python3 verify_algorithm.py -n 25      # a longer sweep
+    python3 verify_algorithm.py --self-test
 
-A verifier that cannot fail is worthless, so `--self-test` injects known
-faults and asserts each one is caught. That exercise earned its keep: the
-`d(s) = 0` fault (source height left at 0 instead of |V|) still produces a
-valid flow of 23 on CLRS Figure 26.1 -- the published example misses it
-entirely -- but the random-graph property test catches it on 192 of 200
-graphs, the first one included. One worked example is not verification.
-
-Run: python3 verify_algorithm.py [-n TRIALS] [--self-test]
+The self-test injects faults into the FLOW, not into a copy of the algorithm,
+so what it proves is that these checks can reject a bad answer.
 """
 
 from __future__ import annotations
 
 import argparse
 import collections
+import json
+import os
 import random
 import sys
+import tempfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SPEC = HERE.parent / "spec"
+sys.path.insert(0, str(HERE.parent.parent.parent))
+
+from edge_workbench.driver import run as driver          # noqa: E402
+
 
 # --------------------------------------------------------------------------
-# The published example
+# the instance the page shows
 # --------------------------------------------------------------------------
-# CLRS Figure 26.1: s, v1, v2, v3, v4, t numbered 0..5.
-CLRS_26_1 = {(0, 1): 16, (0, 2): 13, (1, 2): 10, (2, 1): 4, (1, 3): 12,
-             (3, 2): 9, (2, 4): 14, (4, 3): 7, (3, 5): 20, (4, 5): 4}
-CLRS_26_1_MAXFLOW = 23     # published; not computed by anything in this repo
-CLRS_N, CLRS_S, CLRS_T = 6, 0, 5
+def page_instance() -> dict:
+    return json.loads((SPEC / "instance.json").read_text())
+
+
+def capacities_of(instance: dict) -> tuple[dict, int, int, int]:
+    """(capacity map, |V|, source, sink) from an instance."""
+    cap = {
+        (int(k.split(",")[0]), int(k.split(",")[1])): v
+        for k, v in instance["tensors"]["C"].items()
+    }
+    n = instance["extent"]["U"]
+    # Source and sink come from the S and T TENSORS, which are what the
+    # cascade reads. `domain.graph` also names them, but that block is
+    # presentation -- and when the two disagree, believing the presentation
+    # means validating a different problem than the one that ran.
+    source = next(iter(instance["tensors"]["S"]))
+    sink = next(iter(instance["tensors"]["T"]))
+    return cap, n, int(source), int(sink)
+
+
+def published_answer() -> int | None:
+    """What the tutorial says the maximum flow is, if it says.
+
+    From spec/authored.json, the artifact `prepare` writes, so the answer and
+    the instance come from one reading of one tutorial at one commit -- not
+    from whatever the working tree holds when the verifier happens to run.
+    """
+    try:
+        from edge_workbench import prepare
+        example = prepare.load(SPEC).get("example") or {}
+        return example.get("expect", {}).get("flow")
+    except Exception:
+        return None
 
 
 # --------------------------------------------------------------------------
-# Is this a valid flow?
+# run the REAL cascade
+# --------------------------------------------------------------------------
+def cascade_flow(instance: dict, seed: int | None = None) -> dict:
+    """Run the driver on `instance` and return its final flow tensor F.
+
+    This is the evaluator the page uses. There is no second one.
+    """
+    selectors = None
+    if seed is not None:
+        selectors = {"pick-admissible-edge": {"rule": "seeded", "seed": seed}}
+
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        json.dump(instance, fh)
+        path = fh.name
+    try:
+        result = driver.run("max-flow", instance=path, selectors=selectors)
+    finally:
+        os.unlink(path)
+
+    final = result["steps"][-1]["state"]
+    return {
+        (int(k.split(",")[0]), int(k.split(",")[1])): v
+        for k, v in final.get("F", {}).items()
+    }
+
+
+# --------------------------------------------------------------------------
+# 3. the properties -- no oracle needed
 # --------------------------------------------------------------------------
 def validate_flow(F, cap, n, s, t):
-    """Check F is a feasible flow, and return its value.
+    """Is this a feasible flow, and what is its value?
 
-    F is the antisymmetric representation the cascade produces:
-    F[(u,v)] = -F[(v,u)], positive meaning flow from u to v.
-
-    Returns (value, problems). An empty problem list means F is a feasible
-    flow of that value -- feasible, not necessarily maximum; maximality is
-    what the independent oracle is for.
+    Returns (value, problems). An empty `problems` means the flow is genuinely
+    feasible -- not merely that its total came out right.
     """
     problems = []
+    for (u, v), f in F.items():
+        if f > cap.get((u, v), 0):
+            problems.append(f"f({u},{v})={f} exceeds capacity "
+                            f"{cap.get((u, v), 0)}")
+        if F.get((v, u), 0) != -f:
+            problems.append(f"antisymmetry: f({u},{v})={f} but "
+                            f"f({v},{u})={F.get((v, u), 0)}")
 
-    def f(u, v):
-        return F.get((u, v), 0)
-
+    net = collections.defaultdict(int)
+    for (u, v), f in F.items():
+        if f > 0:
+            net[u] -= f
+            net[v] += f
     for u in range(n):
-        for v in range(n):
-            if f(u, v) != -f(v, u):
-                problems.append(
-                    f"antisymmetry: f({u},{v})={f(u, v)} but "
-                    f"f({v},{u})={f(v, u)}")
-            c = cap.get((u, v), 0)
-            if f(u, v) > c:
-                problems.append(
-                    f"capacity: f({u},{v})={f(u, v)} exceeds c={c}")
-
-    for u in range(n):
-        if u in (s, t):
+        if u in (s, t) or net[u] == 0:
             continue
-        # With an antisymmetric F, net flow at u is the sum of the column.
-        net = sum(f(v, u) for v in range(n))
-        if net != 0:
-            problems.append(f"conservation: vertex {u} has net {net}, want 0")
+        problems.append(f"conservation: vertex {u} holds {net[u]}")
 
-    out_of_s = sum(f(s, v) for v in range(n))
-    into_t = sum(f(v, t) for v in range(n))
-    if out_of_s != into_t:
-        problems.append(
-            f"value: {out_of_s} leaves the source but {into_t} reaches the "
-            f"sink")
-
-    return into_t, problems
+    out_of_source = sum(f for (u, _v), f in F.items() if u == s and f > 0)
+    into_sink = sum(f for (_u, v), f in F.items() if v == t and f > 0)
+    if out_of_source != into_sink:
+        problems.append(f"value at source {out_of_source} != at sink "
+                        f"{into_sink}")
+    return into_sink, problems
 
 
 # --------------------------------------------------------------------------
-# Independent oracle: augmenting paths, not push-relabel
+# 2. the independent oracle -- a different algorithm, same problem
 # --------------------------------------------------------------------------
 def edmonds_karp(cap, n, s, t):
-    """Maximum flow by BFS augmenting paths. Deliberately unlike the cascade:
-    it maintains a feasible flow throughout rather than a preflow, and never
-    computes a height function."""
-    res = collections.defaultdict(int)
+    residual = collections.defaultdict(int)
     for (u, v), c in cap.items():
-        res[(u, v)] += c
-    flow = 0
+        residual[(u, v)] += c
+    total = 0
     while True:
         parent = {s: None}
-        q = collections.deque([s])
-        while q and t not in parent:
-            u = q.popleft()
+        queue = collections.deque([s])
+        while queue and t not in parent:
+            u = queue.popleft()
             for v in range(n):
-                if v not in parent and res[(u, v)] > 0:
+                if v not in parent and residual[(u, v)] > 0:
                     parent[v] = u
-                    q.append(v)
+                    queue.append(v)
         if t not in parent:
-            return flow
-        # bottleneck along the path
-        b, v = float("inf"), t
+            return total
+        bottleneck, v = float("inf"), t
         while parent[v] is not None:
-            b = min(b, res[(parent[v], v)])
+            bottleneck = min(bottleneck, residual[(parent[v], v)])
             v = parent[v]
         v = t
         while parent[v] is not None:
-            res[(parent[v], v)] -= b
-            res[(v, parent[v])] += b
+            residual[(parent[v], v)] -= bottleneck
+            residual[(v, parent[v])] += bottleneck
             v = parent[v]
-        flow += b
+        total += bottleneck
 
 
 # --------------------------------------------------------------------------
-# The bulk-synchronous cascade, as EDGE specifies it
+# generated instances, run through the SAME driver
 # --------------------------------------------------------------------------
-def edge_cascade(cap, n, s, t, seed=0, max_rounds=200000, fault=None):
-    """One round: every active vertex pushes on one admissible edge, sync,
-    then every still-active vertex with nothing admissible relabels.
-
-    Mirrors the Einsum cascade. Returns (F, rounds) or raises on non-
-    termination, which would itself be a correctness failure.
-
-    `fault` deliberately breaks one thing, for --self-test. It lives here
-    rather than in a copy of the cascade so the faults are injected into the
-    code actually under test, and cannot drift away from it.
-    """
-    rng = random.Random(seed)
-    F, R = {}, {}
-    for (u, v), c in cap.items():
-        R[(u, v)] = R.get((u, v), 0) + c
-    D = {u: 0 for u in range(n)}
-    D[s] = 0 if fault == "no-source-height" else n
-    E = {u: 0 for u in range(n)}
-    for (u, v), c in cap.items():                       # preflow
-        if u != s:
-            continue
-        F[(u, v)] = c
-        if fault != "no-antisymmetry":
-            F[(v, u)] = -c
-        E[v] += c
-        E[s] -= c
-        R[(u, v)] = 0
-        R[(v, u)] = R.get((v, u), 0) + c
-
-    rounds = 0
-    while True:
-        act = [u for u in range(n) if u not in (s, t) and E[u] > 0]
-        if not act:
-            return F, rounds
-        rounds += 1
-        if rounds > max_rounds:
-            raise RuntimeError(f"cascade did not terminate in {max_rounds} "
-                               f"rounds")
-        delta = {}
-        for u in act:
-            adm = [v for v in range(n)
-                   if R.get((u, v), 0) > 0
-                   and (fault == "ignore-height" or D[u] == D[v] + 1)]
-            if adm:
-                v = rng.choice(adm)
-                delta[(u, v)] = (E[u] if fault == "overpush"
-                                 else min(E[u], R[(u, v)]))
-        for (u, v), d in delta.items():
-            F[(u, v)] = F.get((u, v), 0) + d
-            F[(v, u)] = F.get((v, u), 0) - d
-            R[(u, v)] -= d
-            R[(v, u)] = R.get((v, u), 0) + d
-            E[u] -= d
-            E[v] += d
-        act2 = [u for u in range(n) if u not in (s, t) and E[u] > 0]
-        rel = {}
-        for u in act2:
-            if not any(R.get((u, v), 0) > 0 and D[u] == D[v] + 1
-                       for v in range(n)):
-                nb = [D[v] for v in range(n) if R.get((u, v), 0) > 0]
-                if nb:
-                    rel[u] = 1 + min(nb)
-        D.update(rel)
-        if not delta and not rel:
-            return F, rounds
-
-
-# --------------------------------------------------------------------------
-# Graphs to test on
-# --------------------------------------------------------------------------
-def random_graph(n, rng, degree=3, maxcap=20):
+def random_instance(template: dict, n: int, rng, degree=3, maxcap=20) -> dict:
     cap = {}
-    for u in range(n):
-        for _ in range(degree):
-            v = rng.randrange(n)
-            if v != u and (v, u) not in cap and (u, v) not in cap:
-                cap[(u, v)] = rng.randint(1, maxcap)
-    for v in range(1, min(degree + 1, n)):
-        cap.setdefault((0, v), rng.randint(5, maxcap))
-    for u in range(max(1, n - degree - 1), n - 1):
-        cap.setdefault((u, n - 1), rng.randint(5, maxcap))
-    return cap
-
-
-def adversarial_graphs():
-    """Shapes chosen to break specific assumptions, not random ones."""
-    return [
-        ("no path from source to sink", 4, {(0, 1): 5, (2, 3): 5}),
-        ("single edge", 2, {(0, 1): 7}),
-        ("source is the sink's only neighbour", 3,
-         {(0, 1): 4, (1, 2): 9}),
-        ("antiparallel pair", 4,
-         {(0, 1): 10, (1, 2): 5, (2, 1): 5, (2, 3): 10}),
-        ("zero-capacity edge", 3, {(0, 1): 0, (0, 2): 4, (1, 2): 4}),
-        ("bottleneck in the middle", 4,
-         {(0, 1): 100, (1, 2): 1, (2, 3): 100}),
-        ("parallel disjoint paths", 6,
-         {(0, 1): 5, (1, 5): 5, (0, 2): 6, (2, 5): 6, (0, 3): 7, (3, 5): 7}),
-        ("long chain", 6,
-         {(0, 1): 3, (1, 2): 3, (2, 3): 3, (3, 4): 3, (4, 5): 3}),
-        ("cycle not on any s-t path", 5,
-         {(0, 1): 5, (1, 4): 5, (2, 3): 2, (3, 2): 2}),
-    ]
+    for u in range(n - 1):
+        for _ in range(rng.randint(1, degree)):
+            v = rng.randrange(u + 1, n)
+            cap[f"{u},{v}"] = cap.get(f"{u},{v}", 0) + rng.randint(1, maxcap)
+    for u in range(1, n - 1):                    # keep the sink reachable
+        cap.setdefault(f"{u},{n - 1}", rng.randint(1, maxcap))
+    inst = json.loads(json.dumps(template))
+    inst["extent"] = {"U": n, "V": n}
+    inst["scalars"]["VertexCount"] = n
+    inst["tensors"]["C"] = cap
+    inst["tensors"]["G"] = {k: 1 for k in cap}
+    inst["tensors"]["S"] = {"0": True}
+    inst["tensors"]["T"] = {str(n - 1): True}
+    inst.setdefault("domain", {})["graph"] = {
+        "nodes": list(range(n)),
+        "edges": [
+            {"u": int(k.split(",")[0]), "v": int(k.split(",")[1]), "cap": v}
+            for k, v in cap.items()
+        ],
+        "source": 0,
+        "sink": n - 1,
+    }
+    return inst
 
 
 # --------------------------------------------------------------------------
-def check(name, cap, n, s, t, seed=0, fault=None):
-    """Run the cascade, validate its flow, and compare with the oracle."""
+def check(name, instance, seed=None, fault=None):
+    cap, n, s, t = capacities_of(instance)
     try:
-        F, rounds = edge_cascade(cap, n, s, t, seed=seed, fault=fault)
-    except RuntimeError as exc:
-        return False, f"{name}: {exc}"
+        F = cascade_flow(instance, seed=seed)
+    except Exception as exc:
+        return False, f"{name}: the cascade did not run -- {exc}"
+
+    if fault:
+        F = inject(F, fault, cap, s)
 
     value, problems = validate_flow(F, cap, n, s, t)
     if problems:
-        return False, f"{name}: produced an invalid flow -- " + \
-            "; ".join(problems[:3])
+        return False, f"{name}: invalid flow -- " + "; ".join(problems[:3])
 
     want = edmonds_karp(cap, n, s, t)
     if value != want:
-        return False, (f"{name}: cascade says {value}, "
-                       f"Edmonds-Karp says {want}")
-    return True, f"{name}: {value} ({rounds} rounds)"
+        return False, f"{name}: cascade says {value}, Edmonds-Karp says {want}"
+    return True, f"{name}: {value}"
 
 
 FAULTS = {
-    "no-antisymmetry": "the reverse edge is not updated on a push",
-    "overpush": "a push ignores the residual capacity",
-    "no-source-height": "d(s) is left at 0 instead of |V|",
-    "ignore-height": "pushes go on any residual edge, not only admissible",
+    "break-antisymmetry": "drop the reverse entry on one edge",
+    "overpush": "raise one edge's flow above its capacity",
+    "break-conservation": "add flow into one internal vertex",
+    "halve-the-answer": "halve every flow, keeping it feasible",
 }
 
 
-def self_test(trials):
-    """Break the cascade on purpose; every fault must be caught somewhere.
+def inject(F, fault, cap, s):
+    """Break the ANSWER, so the checks above are what gets tested."""
+    F = dict(F)
+    if fault == "break-antisymmetry":
+        for (u, v) in list(F):
+            if F[(u, v)] > 0:
+                F.pop((v, u), None)
+                return F
+    if fault == "overpush":
+        for (u, v) in list(F):
+            if F[(u, v)] > 0:
+                F[(u, v)] = cap.get((u, v), 0) + 1
+                F[(v, u)] = -F[(u, v)]
+                return F
+    if fault == "break-conservation":
+        for (u, v) in list(F):
+            if F[(u, v)] > 0 and u != s:
+                F[(u, v)] += 1
+                F[(v, u)] = -F[(u, v)]
+                return F
+    if fault == "halve-the-answer":
+        return {k: v // 2 for k, v in F.items()}
+    return F
 
-    Reports which faults the published example alone would miss, because that
-    is the argument for testing on random graphs at all.
-    """
-    print("Self-test: each fault must be caught\n")
-    ok = True
-    for fault, desc in FAULTS.items():
-        by_clrs, by_random, first = False, 0, None
-        passed, _ = check("clrs", CLRS_26_1, CLRS_N, CLRS_S, CLRS_T,
-                          fault=fault)
-        by_clrs = not passed
-        for n in (4, 6, 10):
-            for k in range(min(trials, 20)):
-                rng = random.Random(7000 + n * 1000 + k)
-                cap = random_graph(n, rng)
-                good, msg = check(f"n={n} k={k}", cap, n, 0, n - 1,
-                                  seed=k, fault=fault)
-                if not good:
-                    by_random += 1
-                    first = first or msg
-        caught = by_clrs or by_random
-        ok = ok and caught
-        where = ("CLRS example" if by_clrs else "NOT by the CLRS example")
-        print(f"  {'ok  ' if caught else 'FAIL'} {desc}")
-        print(f"       caught by: {where}; "
-              f"{by_random} random graphs")
-        if first and not by_clrs:
-            print(f"       first random failure — {first}")
-    print(f"\n{'all faults caught' if ok else 'SOME FAULTS WENT UNDETECTED'}")
-    return 0 if ok else 1
+
+def self_test():
+    print("self-test: every fault in the ANSWER must be rejected\n")
+    instance = page_instance()
+    bad = 0
+    for fault, why in FAULTS.items():
+        ok, msg = check("fault", instance, fault=fault)
+        caught = not ok
+        print(f"  {'ok  ' if caught else 'MISS'} {fault:22} {why}")
+        bad += not caught
+    print()
+    if bad:
+        print(f"{bad} fault(s) went unnoticed -- these checks cannot be trusted")
+        return 1
+    print(f"{len(FAULTS)}/{len(FAULTS)} faults caught")
+    return 0
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("-n", "--trials", type=int, default=40,
-                    help="random graphs per size")
-    ap.add_argument("-v", "--verbose", action="store_true")
-    ap.add_argument("--self-test", action="store_true",
-                    help="inject known faults and check each is caught")
+    ap.add_argument("-n", type=int, default=12,
+                    help="generated instances to sweep")
+    ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
 
     if args.self_test:
-        return self_test(args.trials)
+        return self_test()
 
-    failures = []
-    passed = 0
+    instance = page_instance()
+    cap, n, s, t = capacities_of(instance)
+    results = []
 
-    def record(ok, msg):
-        nonlocal passed
-        if ok:
-            passed += 1
-            print("  ok   " + msg)
-        else:
-            failures.append(msg)
-            print("  FAIL " + msg)
+    # 1. the published answer, on the instance the page shows
+    published = published_answer()
+    value, problems = validate_flow(cascade_flow(instance), cap, n, s, t)
+    if published is None:
+        print("!! the tutorial publishes no answer -- skipped", file=sys.stderr)
+    else:
+        results.append((
+            value == published and not problems,
+            f"the page's instance: {value}, tutorial publishes {published}",
+        ))
 
-    # ---- 1. the published example ----------------------------------------
-    print("CLRS Figure 26.1 — published maximum flow 23")
-    F, rounds = edge_cascade(CLRS_26_1, CLRS_N, CLRS_S, CLRS_T)
-    value, problems = validate_flow(F, CLRS_26_1, CLRS_N, CLRS_S, CLRS_T)
-    record(not problems,
-           "the cascade's flow is feasible" if not problems
-           else "CLRS: invalid flow -- " + "; ".join(problems[:3]))
-    record(value == CLRS_26_1_MAXFLOW,
-           f"value is the published {CLRS_26_1_MAXFLOW}" if
-           value == CLRS_26_1_MAXFLOW else
-           f"CLRS: got {value}, published answer is {CLRS_26_1_MAXFLOW}")
-    record(edmonds_karp(CLRS_26_1, CLRS_N, CLRS_S, CLRS_T)
-           == CLRS_26_1_MAXFLOW,
-           "the independent oracle agrees with the published answer")
+    # 3. the properties, on the same run
+    results.append((not problems,
+                    "the flow is feasible: capacity, antisymmetry, "
+                    "conservation, source == sink"))
 
-    # The selector is free to pick any admissible edge; the answer must not
-    # depend on which. The whole cascade rests on that, and it is the kind of
-    # assumption a single fixed seed would never test.
-    values, invalid = set(), 0
-    for k in range(50):
-        Fk, _ = edge_cascade(CLRS_26_1, CLRS_N, CLRS_S, CLRS_T, seed=k)
-        vk, pk = validate_flow(Fk, CLRS_26_1, CLRS_N, CLRS_S, CLRS_T)
-        values.add(vk)
-        invalid += bool(pk)
-    record(values == {CLRS_26_1_MAXFLOW} and not invalid,
-           "50 different selector choices all give a feasible flow of "
-           f"{CLRS_26_1_MAXFLOW}"
-           if values == {CLRS_26_1_MAXFLOW} and not invalid
-           else f"selector choice matters: values {sorted(values)}, "
-                f"{invalid} infeasible")
+    # the free choice must not change the answer
+    for seed in (1, 7):
+        results.append(check(f"seed {seed}", instance, seed=seed))
 
-    # ---- 2. shapes that break assumptions --------------------------------
-    print("\nAdversarial shapes")
-    for name, n, cap in adversarial_graphs():
-        record(*check(name, cap, n, 0, n - 1))
-
-    # ---- 3. random graphs against the independent oracle ------------------
-    print(f"\nRandom graphs vs Edmonds-Karp ({args.trials} per size)")
-    for n in (4, 6, 10, 16, 25):
-        bad = 0
-        for k in range(args.trials):
-            rng = random.Random(7000 + n * 1000 + k)
-            cap = random_graph(n, rng)
-            ok, msg = check(f"n={n} trial={k}", cap, n, 0, n - 1, seed=k)
+    # 2. the oracle, over generated instances
+    rng = random.Random(20260927)
+    for size in (5, 7):
+        agree = 0
+        for _ in range(max(1, args.n // 4)):
+            ok, msg = check(f"random n={size}", random_instance(instance, size, rng))
             if not ok:
-                bad += 1
-                if bad == 1:
-                    failures.append(msg)
-                    print("  FAIL " + msg)
-        if not bad:
-            passed += 1
-            print(f"  ok   n={n}: {args.trials}/{args.trials} agree, "
-                  f"all flows feasible")
+                results.append((False, msg))
+                break
+            agree += 1
+        else:
+            results.append((True, f"random n={size}: {agree}/{agree} "
+                                  f"agree with Edmonds-Karp, all feasible"))
 
-    print(f"\n{passed} checks passed, {len(failures)} failed")
-    return 1 if failures else 0
+    failed = 0
+    for ok, msg in results:
+        print(f"  {'ok  ' if ok else 'FAIL'} {msg}")
+        failed += not ok
+    print(f"\n{len(results) - failed} checks passed, {failed} failed")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

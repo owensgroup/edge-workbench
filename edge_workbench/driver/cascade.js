@@ -169,11 +169,14 @@ function runCascade(program, instance, cascade, opts) {
     }
   }
   if (!stopped) {
-    throw new Error(
+    const err = new Error(
       `the cascade ran ${maxGen} generations without its stopping condition ` +
         `holding. Either the instance is larger than maxGenerations allows, ` +
         `or the cascade does not terminate on it.`
     );
+    // What it was doing, for whoever has to find out why it never stopped.
+    err.steps = steps;
+    throw err;
   }
 
   return { generations: gen - 1, steps, executed };

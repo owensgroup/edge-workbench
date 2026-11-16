@@ -8,3 +8,6 @@ node_modules/
 # Generated pages are build output. The fixtures they are checked against
 # are not -- those are committed.
 build/
+
+# Papers and PDFs kept locally for reference; not ours to publish.
+docs/references/

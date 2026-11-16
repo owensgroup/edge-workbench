@@ -45,7 +45,7 @@ def random_instance(rng):
     init = {str(r): rows + r for r in range(rows) if f"{r},{first}" in a}
     return {
         "extent": {"R": rows, "C": cols},
-        "scalars": {"RowCount": rows},
+        "scalars": {},
         "tensors": {"A": a, "Col": {str(c): True for c in range(cols)},
                     "Row": {str(r): True for r in range(rows)}, "InitS": init},
     }

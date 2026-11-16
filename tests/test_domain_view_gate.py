@@ -46,7 +46,7 @@ SPECS = sorted(p for p in (ROOT / "algorithms").glob("*/spec")
 # What each algorithm's program implies, and why. Pinned rather than computed,
 # so a change to `classify` that silently reclassifies an algorithm fails here
 # instead of quietly redrawing a page.
-EXPECTED = {"max-flow": "graph", "set-cover": "bipartite"}
+EXPECTED = {"max-flow": "graph"}
 
 
 @pytest.fixture(params=SPECS, ids=[p.parent.name for p in SPECS])

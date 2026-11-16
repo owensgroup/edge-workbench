@@ -209,6 +209,30 @@ def inputs(program: dict, gen_rank: str = "I") -> list[str]:
     return sorted(out)
 
 
+def coord_sets(program: dict) -> dict[str, str]:
+    """Named coordinate sets the program restricts an Einsum to, mapped to
+    the rank each one ranges over: also host data, like `inputs`.
+
+    Bellman-Ford's `D_{0, s : s in root_id} = 0` names `root_id`, a set of
+    vertices over rank S. Nothing in the program says what it holds.
+    """
+    decls = {d["name"]: d for d in program.get("declarations", [])}
+    out: dict[str, str] = {}
+    for einsum in (program.get("initialization", {}).get("einsums", [])
+                   + program["main_edge"]["cascade"]["einsums"]):
+        ranks = [r["name"] for r in
+                 decls.get(einsum["output_tensor"], {}).get("ranks", [])]
+        for pred in einsum.get("predicates") or []:
+            cs = pred.get("coord_set") or {}
+            if pred.get("kind") != "set_membership" or cs.get("kind") != "named":
+                continue
+            member = (pred.get("member") or {}).get("name")
+            rank = next((ranks[k] for k, r in enumerate(einsum["output_ranks"])
+                         if k < len(ranks) and r.get("name") == member), "?")
+            out.setdefault(cs["name"], rank)
+    return out
+
+
 def _all_read(program: dict) -> set[str]:
     """Every tensor the program reads, STOPPING CONDITIONS INCLUDED.
 

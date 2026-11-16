@@ -68,6 +68,20 @@ def classify(program: dict, instance: dict | None = None,
         }
 
     decorated = [r for r in ranks if singles.get(r)]
+    shapes = {s for s in (_shape_of(program, r) for r in decorated) if s}
+    if len(decorated) >= 2 and len(shapes) == 1 and all(
+            _shape_of(program, r) for r in decorated):
+        # Bellman-Ford's D^{I, S = |V|} and N^{I, D = |V|}: two rank names,
+        # one vertex set. A shared shape symbol says they index the same set.
+        only = decorated[0]
+        return {
+            "view": GRAPH,
+            "sides": (),
+            "reason": (
+                f"rank-1 tensors live on {', '.join(decorated)}, all of shape "
+                f"{next(iter(shapes))}, so they index the same set"
+            ),
+        }
     if len(decorated) >= 2:
         left, right = decorated[0], decorated[1]
         detail = (f"rank-1 tensors live on both {left} ({singles[left]}) and "
@@ -86,6 +100,15 @@ def classify(program: dict, instance: dict | None = None,
             f"rank-2 tensor index the same set"
         ),
     }
+
+
+def _shape_of(program: dict, rank: str) -> str | None:
+    """The shape symbol a rank is declared with (`|V|`), if it is one."""
+    for d in program.get("declarations", []):
+        for r in d.get("ranks", []):
+            if r["name"] == rank and isinstance(r.get("shape"), str):
+                return r["shape"]
+    return None
 
 
 def bipartite_positions(left_n: int, right_n: int, left: str, right: str,

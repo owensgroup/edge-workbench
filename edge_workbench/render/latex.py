@@ -118,6 +118,8 @@ def tensor(name: str) -> str:
     Single letters stay upright, multi-letter names are italicised as a unit
     so `FS` does not read as F times S, and a Greek name becomes the letter.
     """
+    if name.endswith("*"):
+        return tensor(name[:-1]) + "^*"
     if name in GREEK:
         return "\\" + name
     low = name.lower()
@@ -167,7 +169,8 @@ class Renderer:
         if kind == "arith":
             return f"{self.rank(r['lhs'])}{r['op']}{self.rank(r['rhs'])}"
         if kind == "shape_sym":
-            return r"\lvert " + str(r.get("name", "?")) + r"\rvert"
+            return (r"\lvert " + str(r.get("name", "?")).strip("|")
+                    + r"\rvert")
         if kind == "rank_value":
             # EDGE's "rank variables as tensors": a coordinate read as a
             # value. The IR field is `expr`; `rank` and `value` are read too
@@ -224,7 +227,7 @@ class Renderer:
 
         The IR has no way to hang a Reduce or a Populate on a lone tensor, so
         a pure reduction is written `X op identityScalar` purely to give the
-        spec a label to attach to. `edge_interp.js` treats exactly this case
+        spec a label to attach to. the page used to treat exactly this case
         as a wrapper -- it returns the left operand untouched -- and the
         rendering has to agree, or the page would show an operand the
         evaluator ignores.

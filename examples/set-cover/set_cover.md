@@ -34,7 +34,7 @@ problem_statement: |
   - \(\mathrm{Success}^{I} \to \text{Boolean}\), `empty` \(=\) False, flag indicating whether all columns are covered.
   - \(\mathrm{Sol}^{I,\, R \equiv \lvert R\rvert} \to \text{Boolean}\), `empty` \(=\) False, the output exact cover solution.
   - \(\mathrm{RowCounts}^{I,\, C \equiv \lvert C\rvert} \to \text{integer}\), `empty` \(= 0\), the cover degree of each column.
-  - \(\mathrm{PickedCol}^{I,\, C \equiv \lvert C\rvert} \to \text{Boolean}\), `empty` \(=\) False, the column chosen to cover next.
+  - \(\mathrm{PickedCol}^{I,\, C \equiv \lvert C\rvert} \to \text{integer}\), `empty` \(=\) 0, the column chosen to cover next.
   - \(\mathrm{Candidates}^{I,\, R \equiv \lvert R\rvert} \to \text{Boolean}\), `empty` \(=\) False, the active rows covering the chosen column.
 working_example_part1: |
   ### Working Example 1: Three-Column Universe
@@ -182,7 +182,7 @@ edge_expression: |
     \mathrm{Sol}^{I,\, R} &\to \text{Boolean},\ \text{empty}=\text{False} \\
     \mathrm{RowCounts}^{I,\, C} &\to \text{integer},\ \text{empty}=0 \\
     \mathrm{ActiveCounts}^{I,\, C} &\to \text{integer},\ \text{empty}=0 \\
-    \mathrm{PickedCol}^{I,\, C} &\to \text{Boolean},\ \text{empty}=\text{False} \\
+    \mathrm{PickedCol}^{I,\, C} &\to \text{integer},\ \text{empty}=0 \\
     \mathrm{Candidates}^{I,\, R} &\to \text{Boolean},\ \text{empty}=\text{False} \\
     \mathrm{NewChoices}^{I,\, R} &\to \text{integer},\ \text{empty}=-1 \\
     T^{I,\, R} &\to \text{integer},\ \text{empty}=-1 \\
@@ -261,7 +261,7 @@ variants: |
     \mathrm{Sol}^{I,\, W,\, R} &\to \text{Boolean},\ \text{empty}=\text{False} \\
     \mathrm{RowCounts}^{I,\, W,\, C} &\to \text{integer},\ \text{empty}=0 \\
     \mathrm{ActiveCounts}^{I,\, W,\, C} &\to \text{integer},\ \text{empty}=0 \\
-    \mathrm{PickedCol}^{I,\, W,\, C} &\to \text{Boolean},\ \text{empty}=\text{False} \\
+    \mathrm{PickedCol}^{I,\, W,\, C} &\to \text{integer},\ \text{empty}=0 \\
     \mathrm{Candidates}^{I,\, W,\, R} &\to \text{Boolean},\ \text{empty}=\text{False} \\
     \mathrm{NewChoices}^{I,\, W,\, R} &\to \text{integer},\ \text{empty}=-1 \\
     T^{I,\, W,\, R} &\to \text{integer},\ \text{empty}=-1 \\[6pt]

@@ -4,7 +4,7 @@ The lifted tooling used to be one flat directory where every file found its
 neighbours with `os.path.join(HERE, ...)`. That is fine for one algorithm and
 impossible for many, so the flat lookups are replaced by exactly two ideas:
 
-    TOOL          files that belong to the workbench    (edge_interp.js, ...)
+    TOOL          files that belong to the workbench    (display.js, ...)
     algorithm()   files that belong to one algorithm    (spec/, tests/)
 
 Nothing else about the lifted code changed in the move. The move is proven by

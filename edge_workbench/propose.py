@@ -96,6 +96,11 @@ def instance_contract(program: dict, gen_rank: str = "I") -> str:
         dtype = (d.get("data_type") or {}).get("name", "?")
         where = f"tensors.{name}  over {rs}" if rs else f"scalars.{name}"
         rows.append(f"    {where}  ({dtype}, empty = {d.get('empty_value')!r})")
+    for name, rank in sorted(tensor_facts.coord_sets(program).items()):
+        ranks.add(rank)
+        rows.append(f"    coordSets.{name}  a set of coordinates over rank {rank}")
+    sets_line = ('\n    "coordSets": { "Name": ["0", ...] },'
+                 if tensor_facts.coord_sets(program) else "")
     return f"""
 THE EXAMPLE
 
@@ -111,7 +116,7 @@ more, no fewer:
     "quote": "a verbatim span from the tutorial that states this example",
     "extent":  {{ {", ".join(f'"{r}": <int>' for r in sorted(ranks))} }},
     "scalars": {{ ... }},
-    "tensors": {{ "Name": {{"0,1": value, ...}} }},
+    "tensors": {{ "Name": {{"0,1": value, ...}} }},{sets_line}
     "expect":  {{ "answer": <the answer the tutorial states for it> }}
   }}
 
@@ -180,10 +185,24 @@ THE GAPS TO FILL
 {facts_block}
 RULES
 
-1. Every meaning is ONE sentence saying what the Einsum means FOR THE PROBLEM
-   -- "an edge is downhill when d(u) = d(v)+1" -- not what it does
-   mechanically. The mechanical description is generated from the program and
-   shown next to yours; repeating it wastes the reader's attention.
+0. Fill only what THE GAPS name. Meanings the tutorial states itself, as
+   `Graph meaning:` lines, are used as the author wrote them.
+
+1. Every meaning is ONE sentence saying what the Einsum means FOR THE
+   PROBLEM, not what it does mechanically. The mechanical description is
+   generated from the program and shown next to yours; repeating it wastes the
+   reader's attention.
+
+   Write for someone meeting the algorithm for the first time: say the one thing
+   this step adds, in plain words. Leave out the tutorial's asides, comparisons
+   with other algorithms and any term the page has not explained. The tone to
+   match:
+
+     "An edge is downhill when d(u) = d(v) + 1."
+     "Excess gains what arrived and loses what left."
+     "A vertex that still holds excess but has nowhere to push must relabel."
+     "Forward residual shrinks, reverse residual grows; that is what lets flow
+      be undone later."
 
 2. Every meaning MUST carry a `quote`: a span copied VERBATIM from the
    tutorial below that supports it. This is checked by string comparison. If
@@ -193,6 +212,15 @@ RULES
 3. Do not attribute prose to the wrong Einsum. The walkthrough is grouped by
    phase; each phase covers several Einsums, and which sentence belongs to
    which is the judgement being asked of you.
+
+   Add an entry for "init" (what the search starts from) and for "stop" (why
+   it ends) the same way. When the initialization reads an input the tutorial
+   explains in prose (how a starting value was worked out), nothing in the
+   cascade computes it, so also give a top-level `setupSteps`: a list of short
+   strings walking through that working on the worked example. Use only what
+   the tutorial and its example state; write no new Einsum. If the tutorial
+   does not explain "init" or "stop", list it in a top-level `unstated`, for
+   example `"unstated": ["stop"]`, rather than inventing a reason.
 
 4. Answer with JSON only, in this shape:
 
@@ -232,7 +260,7 @@ def apply(artifact: dict, response: dict, tutorial: Path | None = None) -> dict:
     if quotes:
         out["quotes"] = quotes
 
-    for field in ("example", "tensorNotes", "view"):
+    for field in ("example", "tensorNotes", "view", "setupSteps", "unstated"):
         if response.get(field):
             merged = response[field]
             if field == "tensorNotes":
@@ -249,7 +277,7 @@ def _remaining_gaps(artifact: dict) -> list[str]:
     gaps = []
     if not artifact.get("example"):
         gaps.append("example: still absent")
-    if not artifact.get("meanings"):
+    if not prepare.explained(artifact):
         gaps.append("meanings: still absent")
     return gaps
 

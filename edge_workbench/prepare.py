@@ -172,6 +172,14 @@ def read_tutorial(md: Path) -> Prepared:
     return out
 
 
+def explained(artifact: dict) -> dict[str, str]:
+    """label -> what it means for the problem. The tutorial's own words win."""
+    return {**(artifact.get("meanings") or {}),
+            **{label: said["graph"]
+               for label, said in (artifact.get("tutorialMeanings") or {}).items()
+               if said.get("graph")}}
+
+
 def write(md: Path, spec_dir: Path) -> Prepared:
     """Read the tutorial and write `<spec>/authored.json`."""
     prepared = read_tutorial(md)

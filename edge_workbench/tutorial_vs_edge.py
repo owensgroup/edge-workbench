@@ -37,7 +37,7 @@ from __future__ import annotations
 import difflib
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from edge_workbench import spec_surface as ss
@@ -61,7 +61,7 @@ _LATEX = [
     (r"\cdot", "."), (r"\neg", "not "),
     (r"\lVert", "||"), (r"\rVert", "||"),
     (r"\lvert", "|"), (r"\rvert", "|"), (r"\vert", "|"),
-    (r"\delta", "delta"), (r"^*", "*"),
+    (r"\delta", "delta"), (r"\sigma", "sigma"), (r"^*", "*"),
     (r"\diamond", "<>"), (r"\infty", "inf"),
     (r"\lfloor", "floor("), (r"\rfloor", ")"),
     (r"\lbrace", "{"), (r"\rbrace", "}"), (r"\in", "in"),
@@ -73,7 +73,7 @@ def latex_to_surface(line: str) -> str:
     s = line.strip()
     s = s.replace("&", " ")              # alignment markers, anywhere
     s = re.sub(r"\\\\(\[[^\]]*\])?\s*$", "", s)        # trailing \\ or \\[4pt]
-    s = re.sub(r"\\(?:text|texttt|mathbf|mathrm|textbf|operatorname|mathbin|mathrel)\{([^}]*)\}",
+    s = re.sub(r"\\(?:text|texttt|mathbf|mathrm|mathit|textbf|operatorname|mathbin|mathrel)\{([^}]*)\}",
                r"\1", s)
     for cmd, repl in _LATEX:
         s = s.replace(cmd, repl)
@@ -88,6 +88,7 @@ class Line:
 
     text: str
     label: str | None = None          # einsum.edge's E-number, when known
+    latex: str = ""                   # the tutorial's own LaTeX, when read there
 
     @property
     def einsum(self) -> ss.SurfaceEinsum:
@@ -110,9 +111,25 @@ class Sides:
     initialization: list[str]
     cascade: list[Line]
     stopping: list[str]
+    initialization_latex: list[str] = field(default_factory=list)
+    stopping_latex: list[str] = field(default_factory=list)
+    definitions: list[str] = field(default_factory=list)
 
 
 # ------------------------------------------------------------- readers ---
+
+def _clean_latex(line: str) -> str:
+    """One aligned line as LaTeX that stands on its own: no `&`, no `\\\\`."""
+    s = re.sub(r"\\\\(\[[^\]]*\])?\s*$", "", line.strip())
+    return s.replace("&", " ").strip()
+
+
+def _clean_cases(lines: list[str]) -> str:
+    """A `cases` block keeps its inner `&`s; only the outer one goes."""
+    head, body = "\n".join(lines).split(r"\begin{cases}", 1)
+    return (head.replace("&", " ").strip() + r" \begin{cases}"
+            + re.sub(r"\\\\(\[[^\]]*\])?\s*$", "", body.strip()))
+
 
 def read_tutorial(md: Path) -> Sides:
     block = tut._block_scalar(Path(md).read_text(), "edge_expression")
@@ -124,9 +141,20 @@ def read_tutorial(md: Path) -> Sides:
     init: list[str] = []
     cascade: list[Line] = []
     stop: list[str] = []
+    init_tex: list[str] = []
+    stop_tex: list[str] = []
+    defs: list[str] = []
+
+    # A long Einsum breaks before its `::`, and the action list is still it.
+    lines: list[str] = []
+    for raw in block.splitlines():
+        if raw.strip().startswith("::") and lines:
+            lines[-1] += " " + raw.strip()
+        else:
+            lines.append(raw)
 
     pending: list[str] = []          # a `cases` block spans several lines
-    for raw in block.splitlines():
+    for raw in lines:
         line = raw.strip()
         if not line or line.startswith("$$") or line.startswith(r"\begin{aligned}") \
                 or line.startswith(r"\end{aligned}"):
@@ -139,7 +167,7 @@ def read_tutorial(md: Path) -> Sides:
         if pending or r"\begin{cases}" in line or line.rstrip().endswith("="):
             pending.append(line)
             if r"\end{cases}" in line:
-                cascade.append(Line(_cases(pending)))
+                cascade.append(Line(_cases(pending), latex=_clean_cases(pending)))
                 pending = []
             continue
 
@@ -148,6 +176,7 @@ def read_tutorial(md: Path) -> Sides:
             continue
         if text.startswith("<>"):
             stop.append(text)
+            stop_tex.append(_clean_latex(line))
         elif section == "tensors":
             m = ss.DECL_RE.match(text.replace("empty=", "empty = "))
             if m:
@@ -158,12 +187,18 @@ def read_tutorial(md: Path) -> Sides:
                                 for r in ranks.split(",")),
                     data_type=dtype.lower(), empty=empty)
         elif section == "init":
+            if "user-specified" in text:      # an input, not an assignment
+                continue
             init.append(text)
+            init_tex.append(_clean_latex(line))
         elif ss.HEAD_RE.match(text):
             # Only lines that write a tensor. A definition such as the stamp
-            # function `\sigma(depth, r) = ...` is not part of the cascade.
-            cascade.append(Line(text))
-    return Sides(decls, init, cascade, stop)
+            # function `\sigma(depth, r) = ...` is not part of the cascade,
+            # but it is what the cascade's `\sigma(...)` means.
+            cascade.append(Line(text, latex=_clean_latex(line)))
+        elif re.match(r"\\?[A-Za-z]+\s*\(.*\)\s*=", _clean_latex(line)):
+            defs.append(_clean_latex(line))
+    return Sides(decls, init, cascade, stop, init_tex, stop_tex, defs)
 
 
 def _cases(lines: list[str]) -> str:
@@ -222,6 +257,101 @@ def _fmt_ops(c: Counter) -> str:
     return " ".join(
         quant[a] + (f"^{lb}" if lb else "") + f" {comp}({merge})"
         for (a, lb, comp, merge) in sorted(c, key=lambda t: (t[1] or 0, t[0])))
+
+
+def _labelled(t: Sides, e: Sides) -> list[tuple[Line, str]]:
+    """The tutorial's cascade lines, each with its einsum.edge E-number."""
+    matcher = difflib.SequenceMatcher(a=[ln.key() for ln in t.cascade],
+                                      b=[ln.key() for ln in e.cascade],
+                                      autojunk=False)
+    out = []
+    for op, a1, a2, b1, b2 in matcher.get_opcodes():
+        if op == "equal":
+            out += [(tl, el.label) for tl, el in
+                    zip(t.cascade[a1:a2], e.cascade[b1:b2])]
+    return out
+
+
+def _key_of(latex: str) -> tuple[str, str] | None:
+    """The tensor and generation a formula writes, or None if it writes none."""
+    text = (_cases([latex]) if r"\begin{cases}" in latex
+            else latex_to_surface(latex))
+    return Line(text).key() if ss.HEAD_RE.match(text) else None
+
+
+def _label_of(latex: str, t: Sides, labelled: list[tuple[Line, str]]) -> str | None:
+    """Which Einsum a formula from the walkthrough is, or None."""
+    text = latex_to_surface(latex)
+    if text.startswith("<>"):
+        return "stop"
+    flat = _flat(text)
+    for line, label in labelled:
+        if _flat(line.text) == flat:
+            return label
+    if flat in {_flat(s) for s in t.initialization}:
+        return "init"
+    key = _key_of(latex)
+    if key is None:
+        return None
+    # Written a little differently from `edge_expression`: its output says.
+    same = [label for line, label in labelled if line.key() == key]
+    if len(same) == 1:
+        return same[0]
+    if not same and key in {_key_of(s) for s in t.initialization_latex}:
+        return "init"
+    return None
+
+
+def authored_meanings(md: Path, edge: Path) -> dict:
+    """label -> {"graph": ..., "einsum": ...}, as the walkthrough states them.
+
+    Each pair sits under its formula. The nearest formula that is an Einsum of
+    this cascade is the one it explains, so an aside such as `$f(v,s) = -c$`
+    between the two does not move it.
+    """
+    t, e = read_tutorial(md), read_edge(edge)
+    labelled = _labelled(t, e)
+    out: dict = {}
+    for entry in tut.read_walkthrough_meanings(md):
+        said = {k: entry[k] for k in ("graph", "einsum") if k in entry}
+        label = next((found for found in (_label_of(x, t, labelled)
+                                          for x in entry["equations"]) if found),
+                     None)
+        if label is None:
+            shown = next(iter(said.values()))
+            raise tut.TutorialError(
+                f"the walkthrough's meaning {shown[:60]!r} does not follow a "
+                f"formula from `edge_expression`, so it cannot be placed. Put "
+                f"it right after the Einsum it explains.")
+        if label in out and set(out[label]) & set(said):
+            raise tut.TutorialError(
+                f"the walkthrough explains {label} twice; keep one.")
+        out.setdefault(label, {}).update(said)
+    return out
+
+
+def written_forms(md: Path, edge: Path) -> dict:
+    """The formulas as the author wrote them, for the page to show.
+
+    The IR is a lowering: it has no sigma, and it spells shorthand out in
+    labelled parts, so a formula drawn from it is not the Einsum the author
+    wrote. The tutorial's LaTeX is, and `compare` has already held it to
+    einsum.edge. Keys are E-numbers, plus `init`, `stop` and `definitions`.
+    """
+    t, e = read_tutorial(md), read_edge(edge)
+    out: dict = {"definitions": t.definitions}
+    for tl, label in _labelled(t, e):
+        if tl.latex:
+            out[label] = tl.latex
+    if len(t.initialization_latex) == 1:
+        out["init"] = t.initialization_latex[0]
+    elif t.initialization_latex:
+        out["init"] = (r"\begin{array}{l} "
+                       + r" \\ ".join(t.initialization_latex)
+                       + r" \end{array}")
+    if t.stopping_latex:
+        out["stop"] = " ".join(t.stopping_latex)
+    return out
 
 
 def compare(md: Path, edge: Path) -> list[str]:

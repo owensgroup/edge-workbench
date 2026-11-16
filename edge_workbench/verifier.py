@@ -23,8 +23,9 @@ and may define:
     def random_instance(rng: random.Random) -> dict:
         '''A fresh problem, in the same shape as instance.json.'''
 
-`instance` is the same dict the cascade runs on: `extent`, `scalars`, and
-`tensors` keyed by coordinate strings (`"0,1": 3`). `final` is the state after
+`instance` is the same dict the cascade runs on: `extent`, `scalars`,
+`tensors` keyed by coordinate strings (`"0,1": 3`), and `coordSets` for the
+named coordinate sets an Einsum is restricted to (`"root_id": ["0"]`). `final` is the state after
 the last step: tensor name -> {coordinate string: value}, with the
 generational rank already dropped.
 
@@ -145,6 +146,17 @@ def instance_problems(instance: dict, program: dict,
         if not isinstance(cells, dict):
             out.append(f"{name} must map coordinate strings to values")
             continue
+        # A stored value equal to the empty value IS absent, so this cell is
+        # silently not there. A weight-0 edge against `G empty = 0` is the
+        # case: the run is simply on a different problem.
+        empty = decl.get("empty_value")
+        same = [c for c, v in cells.items() if empty is not None
+                and type(v) is type(empty) and v == empty]
+        if same:
+            out.append(f"{name}{same[:3]} equals {name}'s empty value "
+                       f"({empty!r}), so the cascade reads it as absent, not "
+                       f"as {empty!r}. Change the data, or the declared empty "
+                       f"value if {empty!r} must be a real value.")
         for coord in cells:
             parts = str(coord).split(",")
             if len(parts) != len(ranks):
@@ -165,6 +177,30 @@ def instance_problems(instance: dict, program: dict,
     for name in sorted(set(scalars) & set(decls)):
         if decls[name].get("ranks"):
             out.append(f"{name} has ranks; supply it under `tensors`")
+
+    sets_needed = tensor_facts.coord_sets(program)
+    sets = instance.get("coordSets") or {}
+    for name in sorted(set(sets_needed) - set(sets)):
+        out.append(f"coordinate set {name} is not supplied (under `coordSets`). "
+                   f"The cascade restricts an Einsum to it.")
+    for name in sorted(set(sets) - set(sets_needed)):
+        out.append(f"coordinate set {name} is supplied but the program names "
+                   f"no such set")
+    for name, members in sorted(sets.items()):
+        rank = sets_needed.get(name)
+        if not isinstance(members, list):
+            out.append(f"coordinate set {name} must be a list of coordinates")
+            continue
+        for m in members:
+            try:
+                ok = rank not in extent or 0 <= int(m) < int(extent[rank])
+            except ValueError:
+                out.append(f"{name} member {m!r} is not an integer coordinate")
+                break
+            if not ok:
+                out.append(f"{name} member {m} is outside rank {rank}'s "
+                           f"extent {extent[rank]}")
+                break
     return out
 
 
@@ -218,6 +254,7 @@ def check(spec_dir: Path, verifier_path: Path, n: int = 12,
     free = free_choices(cascade)
     failures: list[str] = []
     passed = 0
+    stuck: list[str] = []          # one failure to run says enough
 
     def one(name: str, inst: dict | None, actual_inst: dict, seed=None):
         nonlocal passed
@@ -226,6 +263,7 @@ def check(spec_dir: Path, verifier_path: Path, n: int = 12,
                 mod, final_state(spec_dir, inst, seed, cascade), actual_inst))
         except driver.DriverError as e:
             failures.append(f"{name}: the cascade did not run: {e}")
+            stuck.append(name)
             return None
         want = normalise(mod.solve(actual_inst))
         if got == want:
@@ -260,6 +298,8 @@ def check(spec_dir: Path, verifier_path: Path, n: int = 12,
     else:
         rng = random.Random(0)
         for k in range(n):
+            if stuck:
+                break
             inst = gen(rng)
             problems = instance_problems(inst, program,
                                          cascade.get("generationalRank", "I"))

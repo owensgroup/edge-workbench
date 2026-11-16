@@ -244,6 +244,52 @@ def read_meanings(tutorial: Path) -> dict[str, str]:
     return {k: v for k, v in data.items() if not k.startswith("_")}
 
 
+WALKTHROUGH_KEY = "edge_expression_walkthrough"
+
+#: `**Graph meaning:** ...`, with or without the bold, at the start of a line.
+_MEANING = re.compile(
+    r"^[ \t]*[*_]{0,2}(Graph|Einsum)\s+meaning:?[*_]{0,2}:?[ \t]*",
+    re.MULTILINE | re.IGNORECASE)
+_MATH = re.compile(
+    r"\$\$(.+?)\$\$|\\\[(.+?)\\\]|\\\((.+?)\\\)|(?<!\$)\$([^$\n]+)\$(?!\$)",
+    re.DOTALL)
+
+
+def _meaning_text(text: str, start: int, stop: int) -> str:
+    """One meaning: up to the paragraph's end, tidied, its quotation marks off."""
+    body = re.split(r"\n[ \t]*\n", text[start:stop], maxsplit=1)[0]
+    return " ".join(body.split()).strip("\"“”‘’'")
+
+
+def read_walkthrough_meanings(tutorial: Path) -> list[dict]:
+    """The `Graph meaning:` / `Einsum meaning:` lines the walkthrough gives.
+
+    One entry per place they appear: `graph`, `einsum`, and `equations`, every
+    formula before them, nearest first. Which Einsum that is takes einsum.edge,
+    so `tutorial_vs_edge.authored_meanings` decides.
+    """
+    text = _block_scalar(Path(tutorial).read_text(), WALKTHROUGH_KEY) or ""
+    marks = list(_MEANING.finditer(text))
+    found: list[dict] = []
+    floor = 0
+    for i, mark in enumerate(marks):
+        stop = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        kind = mark.group(1).lower()
+        # Two markers are a pair when nothing but the first one's paragraph
+        # stands between them.
+        gap = re.split(r"\n[ \t]*\n", text[marks[i - 1].end():mark.start()],
+                       maxsplit=1) if i else []
+        paired = bool(found) and kind not in found[-1] and (
+            len(gap) < 2 or not gap[1].strip())
+        if not paired:
+            equations = [next(g for g in m.groups() if g is not None)
+                         for m in _MATH.finditer(text, floor, mark.start())]
+            found.append({"equations": equations[::-1]})
+            floor = mark.end()
+        found[-1][kind] = _meaning_text(text, mark.end(), stop)
+    return found
+
+
 #: `- $$G^{U \\equiv ...} \\to \\text{integer}$$, `empty` $$= 0$$, the graph structure.`
 _TENSOR_ROW = re.compile(
     r"^\s*-\s+\$\$([A-Za-z][A-Za-z0-9_]*)\^", re.MULTILINE

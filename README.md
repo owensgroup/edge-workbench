@@ -4,9 +4,10 @@ Takes an EDGE algorithm specification and produces a **verified, explorable
 page**: step through the cascade one Einsum at a time and watch each one
 execute over its iteration space.
 
-The page is built by **executing the specification**. There is no recorded
-trace in this repository — not as an input, not as a fixture, not as
-something to check against.
+The page is built by **executing the specification with edge-core-ir's
+evaluator**, which is the source of truth for EDGE semantics. The workbench
+records what that evaluator computed and the page renders it; nothing is
+evaluated a second time, in the browser or anywhere else.
 
 ```
 npm install          # jsdom, for the headless page checks
@@ -14,8 +15,9 @@ npm test             # build, then check
 open build/max-flow/index.html
 ```
 
-`node` and Python 3.10+. Nothing else: the IR is vendored, so a clean clone
-builds without a sibling checkout.
+Python 3.10+ and an [`edge-core-ir`](https://github.com/edge-einsums/edge-core-ir)
+checkout beside this one (or `EDGE_IR_REPO` pointing at it). `node` is needed
+only for the headless page checks.
 
 ## Checking your own tutorial
 
@@ -65,8 +67,8 @@ EDGE_IR_REPO=~/Projects/edge-core-ir npm run gates
 
 ```
 edge_workbench/        the tool. Contains no algorithm.
-  driver/    cascade.js, selectors.js, run.py
-  render/    build_page.py, annotate.py, edge_interp.js
+  driver/    run.py: runs edge-core-ir's evaluator and records the trace
+  render/    build_page.py, annotate.py, display.js (glyphs only; no evaluation)
   coverage.py
   paths.py
 algorithms/max-flow/

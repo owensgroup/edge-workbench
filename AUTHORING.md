@@ -13,7 +13,7 @@ into a chat and tells you where to save the reply.
 
 ## 1. Set up once
 
-You need Python 3.10+, `node`, and two checkouts side by side:
+You need Python 3.10+ and two checkouts side by side:
 
 ```
 git clone https://github.com/edge-einsums/edge-core-ir
@@ -21,8 +21,9 @@ git clone <edge-workbench>
 pip install -e edge-core-ir          # the IR classes and validators (needs pydantic)
 ```
 
-The workbench finds edge-core-ir through `EDGE_IR_REPO`, an installed
-`edge_ir`, or `~/Projects/edge-core-ir`, in that order.
+The workbench runs your cascade with edge-core-ir's evaluator, which it finds
+through `EDGE_IR_REPO`, an edge-core-ir checkout beside edge-workbench,
+`~/Projects/edge-core-ir`, or an installed `edge_ir`, in that order.
 
 ## 2. Make a directory with three files
 
@@ -36,9 +37,26 @@ my-algorithm/
 ### The tutorial
 
 Your usual tutorial `.md`. The workbench reads its `edge_expression` (the
-cascade, in LaTeX) and its prose. Nothing new needs adding: per-Einsum
-meanings and the worked example as data are produced in step 4 and quoted from
-your text.
+cascade, in LaTeX) and its prose. The worked example as data is produced in
+step 4 and quoted from your text.
+
+Say what each Einsum means right under it in `edge_expression_walkthrough`:
+
+```
+$$D_{i+1,v} = N_{i,v} \cdot D_{i,v} :: \bigwedge_v \min(\cup)$$
+
+**Graph meaning:** If the new relaxed value improves the distance to $v$,
+update it; otherwise keep the old distance.
+
+**Einsum meaning:** Take an elementwise min between two tensors over $v$.
+```
+
+The page shows these as you wrote them, and `$...$` renders as math. Each pair
+goes after the formula it explains, which may be an Einsum, an initialization
+or the `\diamond` stop line. Any Einsum without a `Graph meaning:` is filled by
+the model in step 4, quoting your text, and any without an `Einsum meaning:`
+gets a sentence generated from the program. Nothing checks that your sentence
+matches the Einsum, so that part is yours to keep true.
 
 ### einsum.edge
 
@@ -190,15 +208,21 @@ columns), a **sequence** when there is no rank-2 tensor.
 
 ## 6. What you get
 
-`my-algorithm/index.html` — one self-contained file. Open it in a browser;
-nothing else is needed.
+`my-algorithm/index.html` — one file. Open it in a browser. Formulas are set
+by MathJax, loaded from the web; offline, or in a viewer that blocks it, they
+appear in plain text and everything else works the same. Every value it shows was computed by edge-core-ir's
+evaluator during `check`; the page only displays that run.
+
+## Things that catch people out
+
+- A stored value equal to a tensor's declared empty value is absent. With
+  `G ... empty = 0`, a weight-0 edge is the same as no edge. `check` reports
+  this for the worked example and for any instance `random_instance` makes.
+- A cascade has 500 generations to reach its stopping condition. Past that,
+  `check` stops and says so: either the condition is wrong, or the instance
+  never converges (Bellman-Ford on a negative cycle), in which case keep such
+  instances out of `random_instance`.
 
 ## Not supported yet
 
-- initializations over a named coordinate set (`D_{0, s : s in root_id}`)
-- stopping conditions comparing two generations (`D_{i+1} == D_i`)
-- user-defined compute operators in the page: an operator your builder
-  registers in `*_functions.py` satisfies the IR's validators, but the page
-  evaluates in JavaScript and needs its own implementation; `check` names any
-  such operator
 - tensors with more than two non-generational ranks in the picture

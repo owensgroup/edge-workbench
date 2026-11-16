@@ -127,7 +127,10 @@ RULES -- each one is checked
    labelled parenthesized parts of the same Einsum -- AnonymousTensor with
    BinaryApp labels, specs flat on the Einsum -- as max-flow's E06 and E11
    do. A unary on an expression is the paper's degenerate Map against 1
-   (merge take_left, compute = the unary); ||T|| is `Occupancy`. Put a
+   (merge take_left, compute = the unary); ||T|| is `Occupancy`; a shape
+   read as a value, like `|R|`, is
+   `RankValue(expr=RankConstantShapeSym(name="|R|"))`, never a new input
+   tensor. Put a
    `# E07` comment above each Einsum.
 
 3. Every `compute(merge)` pair the spec writes after `::` must appear on that

@@ -378,8 +378,8 @@ function run() {
   check("fastest delay is still positive", fast > 0, fast + "ms");
 
   // ============================================================ drill-down
-  const EdgeInterp = window.EdgeInterp;
-  check("interpreter is inlined into the page", !!EdgeInterp);
+  const EdgeDisplay = window.EdgeDisplay;
+  check("display helpers are inlined into the page", !!EdgeDisplay);
   // `const IR = ...` is a top-level lexical binding, so it is reachable by
   // name but is not a property of window.
   check(

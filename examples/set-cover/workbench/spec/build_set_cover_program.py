@@ -75,6 +75,7 @@ from edge_ir.ir.expr import (
     InputTensor,
     RankArith,
     RankConstantLiteral,
+    RankConstantShapeSym,
     RankValue,
     Occupancy,
     RankVariable,
@@ -108,6 +109,11 @@ def rv(name: str) -> RankVariable:
 
 def rc(value: int | str) -> RankConstantLiteral:
     return RankConstantLiteral(value=value)
+
+
+def row_count() -> RankValue:
+    """|R|, the tutorial's own symbol: a shape read as a value (EDGE 5.10)."""
+    return RankValue(expr=RankConstantShapeSym(name="|R|"))
 
 
 def i_plus_one() -> RankArith:
@@ -198,7 +204,7 @@ def build_exact_cover() -> Program:
         tensor_decl("Sol", [("I", None), ("R", "|R|")], "bool", False),
         tensor_decl("RowCounts", [("I", None), ("C", "|C|")], "int", 0),
         tensor_decl("ActiveCounts", [("I", None), ("C", "|C|")], "int", 0),
-        tensor_decl("PickedCol", [("I", None), ("C", "|C|")], "bool", False),
+        tensor_decl("PickedCol", [("I", None), ("C", "|C|")], "int", 0),
         tensor_decl("Candidates", [("I", None), ("R", "|R|")], "bool", False),
         tensor_decl("NewChoices", [("I", None), ("R", "|R|")], "int", -1),
         tensor_decl("T", [("I", None), ("R", "|R|")], "int", -1),
@@ -225,17 +231,16 @@ def build_exact_cover() -> Program:
         # from A, because a column no row covers still exists.
         tensor_decl("Col", [("C", "|C|")], "bool", False),
         tensor_decl("Row", [("R", "|R|")], "bool", False),
-        # ---- introduced by lowering ---------------------------------------
-        # ---- the stack seed ------------------------------------------------
         # S_0, which the tutorial states only in prose ("initial candidates at
         # depth 1 (first column branch choices)"). Supplied by the host
         # alongside A, the way max-flow's S and T masks are.
         tensor_decl("InitS", [("R", "|R|")], "int", -1),
+        # ---- introduced by lowering ---------------------------------------
+        # ---- the stack seed ------------------------------------------------
         # ---- literals (D21: a literal must be PRESENT, so empty is None) ---
         scalar_decl("Zero", "int", None, value=0),
         scalar_decl("One", "int", None, value=1),
         # |R|, the stamp modulus. Problem data, so no literal value here.
-        scalar_decl("RowCount", "int", 0),
         # The stopping condition's literal 0. Its type comes from occupancy's
         # RETURN type (int), not from S.
         TensorDeclaration(
@@ -302,7 +307,7 @@ def build_exact_cover() -> Program:
                 label=2,
                 lhs=anon(
                     BinaryApp(label=1, lhs=inp("F", rv("i"), rv("r")),
-                              rhs=inp("RowCount")),
+                              rhs=row_count()),
                     rv("i"),
                     rv("r"),
                 ),
@@ -619,7 +624,7 @@ def build_exact_cover() -> Program:
                                               rhs=inp("One")),
                                     rv("i"),
                                 ),
-                                rhs=inp("RowCount"),
+                                rhs=row_count(),
                             ),
                             rv("i"),
                         ),

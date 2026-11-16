@@ -8,10 +8,11 @@
     "check": "node algorithms/max-flow/tests/check_page.js",
     "check:verbose": "node algorithms/max-flow/tests/check_page.js -v",
     "gates": "python3 -m pytest tests -q",
-    "test": "npm run build && npm run views && npm run check && npm run gates",
+    "pages": "node tests/check_pages.js",
+    "test": "npm run views && npm run pages && npm run gates",
     "views": "node tests/check_domain_views.js",
     "views:verbose": "node tests/check_domain_views.js -v",
-    "prepare": "python3 -m edge_workbench.prepare"
+    "prepare-tutorial": "python3 -m edge_workbench.prepare"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"

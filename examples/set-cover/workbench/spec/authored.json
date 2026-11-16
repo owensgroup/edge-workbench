@@ -24,7 +24,9 @@
   "meanings": "model",
   "example": "model",
   "tensorNotes": "model",
-  "view": "model"
+  "view": "model",
+  "setupSteps": "model",
+  "unstated": "model"
  },
  "example": {
   "kind": "instance",
@@ -33,9 +35,7 @@
    "R": 4,
    "C": 3
   },
-  "scalars": {
-   "RowCount": 4
-  },
+  "scalars": {},
   "tensors": {
    "A": {
     "0,0": true,
@@ -74,26 +74,27 @@
   }
  },
  "meanings": {
-  "E01": "The most recently pushed alternative (the deepest one) is the next candidate row to try, which is what makes the search depth-first.",
-  "E02": "The stamp's depth says how far down the search tree the chosen row sits, and so how far back the path must be cut.",
-  "E03": "The row now being explored is consumed, so the stack keeps only the untried sibling alternatives.",
-  "E04": "Which path entries were chosen at a depth shallower than the popped one: the prefix backtracking keeps.",
-  "E05": "Backtracking discards every path entry at or below the new choice's depth, because those rows belong to abandoned branches.",
+  "E01": "The most recent choice, the deepest one, is the next row to try: depth-first search.",
+  "E02": "The stamp gives the popped row's depth, which says how far back to cut the path.",
+  "E03": "The popped row leaves the stack, so only untried alternatives stay.",
+  "E04": "Path entries chosen at a shallower depth: the part backtracking keeps.",
+  "E05": "Backtracking drops every path entry at or below the new depth: those branches are abandoned.",
   "E06": "The row just popped becomes the path's entry for the new depth.",
-  "E07": "The path for the next step is the surviving prefix of the old path plus the newly chosen row.",
+  "E07": "The next path is what survived plus the newly chosen row.",
   "E08": "The rows on the path are the partial solution built so far.",
   "E09": "A column counts as covered once some row already on the path contains it.",
-  "E10": "The columns still needing exactly one cover are the ones the path has not yet covered.",
-  "E11": "A row that shares a column with the path can never join this partial solution, since that column would be covered twice.",
-  "E12": "The rows that can still legally extend the partial solution are those that are neither in conflict nor already chosen.",
+  "E10": "The columns still to cover are the ones the path has not covered.",
+  "E11": "A row sharing a column with the path can't join it: that column would be covered twice.",
+  "E12": "Rows that can still extend the solution: neither in conflict nor already chosen.",
   "E13": "The path is an exact cover exactly when no column is left uncovered.",
   "E14": "When the path is an exact cover, its rows are reported as a solution.",
-  "E15": "Each column's degree is the number of still-eligible rows that could cover it, which measures how constrained it is.",
-  "E16": "Only uncovered columns keep their degree, so columns the path already covers cannot be picked to branch on.",
-  "E17": "Branching on the most constrained uncovered column is Knuth's minimum-degree heuristic, and it keeps the search tree small.",
-  "E18": "The candidates are the eligible rows that could cover the chosen column, and exactly one of them must be in any solution.",
-  "E19": "Sibling alternatives are stamped one level deeper than the current choice, so they are explored before older, shallower alternatives.",
-  "E20": "The untried alternatives from every level stay on the stack, with the newest siblings on top, so backtracking can resume from them."
+  "E15": "Each column's degree: how many still-eligible rows could cover it, a measure of how constrained it is.",
+  "E16": "Only uncovered columns keep their degree, so covered columns can't be picked to branch on.",
+  "E17": "Branch on the most constrained uncovered column: Knuth's minimum-degree heuristic, which keeps the search tree small.",
+  "E18": "The eligible rows covering the chosen column; exactly one of them must be in any solution.",
+  "E19": "New alternatives are stamped one level deeper, so they are tried before older, shallower ones.",
+  "E20": "Untried alternatives from every level stay on the stack, newest on top, for backtracking to resume from.",
+  "init": "The stack starts from InitS, the first choices, worked out from A before the cascade runs."
  },
  "tensorNotes": {
   "A": "The static Boolean input matrix: entry (r, c) is True when row r covers column c.",
@@ -109,7 +110,8 @@
   "RowCounts": "The cover degree of each column.",
   "PickedCol": "The column chosen to cover next.",
   "Candidates": "The active rows that cover the chosen column.",
-  "Keep": "Path entries shallower than the popped depth, the ones backtracking keeps"
+  "Keep": "Path entries shallower than the popped depth, the ones backtracking keeps",
+  "InitS": "The starting stack: the rows covering the column with the fewest rows, each stamped at depth 1. An input; the cascade only copies it into S_0."
  },
  "gaps": [],
  "quotes": {
@@ -132,7 +134,8 @@
   "E17": "pick the column with the minimum count",
   "E18": "the active rows covering the chosen column",
   "E19": "push its covering active rows onto the stack with the new depth",
-  "E20": "the stack of alternative choices"
+  "E20": "the stack of alternative choices",
+  "init": "the initial stack pushes candidate choices for"
  },
  "view": {
   "nodeFill": [
@@ -157,5 +160,15 @@
     "label": "column still to cover"
    }
   ]
- }
+ },
+ "setupSteps": [
+  "Count the rows covering each column of A: C0 has 2, C1 has 2, C2 has 1.",
+  "Pick the column with the fewest rows: C2.",
+  "Take the rows covering it: only R3.",
+  "Stamp each at depth 1 with σ(depth, r) = depth·|R| + r: σ(1, 3) = 1·4 + 3 = 7.",
+  "So InitS = {R3: 7}, and S_0 starts as that."
+ ],
+ "unstated": [
+  "stop"
+ ]
 }

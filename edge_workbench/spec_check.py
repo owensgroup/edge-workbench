@@ -133,9 +133,14 @@ def spec_write_sites(edge: Path) -> list[tuple[str, str, tuple]]:
     from edge_workbench.tutorial_vs_edge import read_edge
 
     sites = []
-    for k, line in enumerate(read_edge(edge).initialization):
+    sides = read_edge(edge)
+    for k, line in enumerate(sides.initialization):
         m = ss.HEAD_RE.match(line)
         if m:
+            # `F_{i,s} = False` where False is F's empty value stores nothing.
+            declared = sides.declarations.get(m.group(1))
+            if declared and line.split("=", 1)[1].strip() == declared.empty:
+                continue
             ranks = ss._split_ranks(m.group(2), m.group(3))
             sites.append((f"initialization line {k + 1}", m.group(1),
                           tuple(_surface_key(r) for r in ranks)))
@@ -265,6 +270,8 @@ def _rank_text(rank: dict) -> str:
         return str(rank["value"])
     if kind == "arith":
         return f"{_rank_text(rank['lhs'])}{rank['op']}{_rank_text(rank['rhs'])}"
+    if kind == "shape_sym":
+        return rank["name"]
     return "?"
 
 

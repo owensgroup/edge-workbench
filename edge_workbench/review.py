@@ -47,6 +47,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from edge_workbench import prepare
+
 MODEL = "model"
 AUTHOR = "author"
 
@@ -214,7 +216,7 @@ def _check_example(example: dict | None) -> list[Finding]:
 
 def _check_meanings(artifact: dict, program: dict,
                     cascade: dict) -> list[Finding]:
-    meanings = artifact.get("meanings") or {}
+    meanings = prepare.explained(artifact)
     touched = tensors_touched(program, cascade)
     labels = set(cascade.get("labels") or {})
 

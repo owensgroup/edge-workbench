@@ -6,5 +6,6 @@
 */workbench/replies/
 */workbench/spec/*_program.json
 */workbench/spec/cascade.json
+*/workbench/spec/written.json
 */workbench/spec/instance.json
 */workbench/spec/meta.py

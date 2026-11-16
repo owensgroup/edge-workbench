@@ -40,16 +40,20 @@ learned: [docs/DESIGN.md](docs/DESIGN.md).
   in this repo evaluates Einsums, in Python or JS.
 - **Fixes go in the tool, not in one page.** Every fix should help future algorithms.
 - **No model or API calls in CI.** Model steps are author-run: `check` writes a
-  prompt, the author pastes it into a chat, and the reply is checked like
-  author input.
+  prompt, and either the author pastes it into a chat or a local agent using
+  the `write-edge-tutorial` skill answers it in-session. Either way the reply
+  is checked like author input.
 - **Do not commit or push.** Leave changes in the working tree.
 - **Ask, don't assume.** Questions and brainstorming are answered in chat, not in files.
 
 ## References
 
 `docs/references/` (git-ignored, local only):
-- `2404.11591v2.pdf` — the EDGE notation paper
-- `3649812.pdf` — Crichton & Krishnamurthi, "Profiling Programming Language Learning" (OOPSLA 2024)
+- `EDGE.pdf` — the EDGE notation paper ("The EDGE Language: Extended General
+  Einsums for Graph Algorithms"). Use its terms: generational (or iterative)
+  rank, generation, cascade, iteration space, coordinate (an index along a
+  rank), never "round".
+- `BFS_EEDS.pdf` — contents not yet described
 - `DOBFS.pdf`, `BF.pdf` — Sanjana's write-ups of the DOBFS and Bellman-Ford tutorials,
   with Graph/Einsum meanings per Einsum. `DOBFS.pdf` predates the `Visited`/`NV`
   split; the current source is GraphEinsums `notebooks/zoo/tutorials/DO_BFS`.

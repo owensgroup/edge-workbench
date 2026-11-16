@@ -14,7 +14,8 @@ from edge_workbench import tutorial_vs_edge as tve  # noqa: E402
 from edge_workbench.spec_surface import parse_edge_file  # noqa: E402
 
 EXAMPLES = {"maximum-flow": "maximum-flow.md", "set-cover": "set_cover.md",
-            "bellman-ford": "bellman-ford.md"}
+            "bellman-ford": "bellman-ford.md",
+            "direction-optimizing-bfs": "direction-optimizing-bfs.md"}
 
 
 def _written(name):

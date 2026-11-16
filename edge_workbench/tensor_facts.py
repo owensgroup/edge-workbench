@@ -8,13 +8,13 @@ determines, and all of which used to be hand-listed in the algorithm's
     rank_names    which ranks a tensor is drawn over, ignoring the
                   generational one -- so a grid knows its axes
     generational  does it carry a generational rank at all
-    stateful      is it LOOP-CARRIED: does a round read what the previous
-                  round wrote
+    stateful      is it LOOP-CARRIED: does a generation read what the
+                  previous generation wrote
 
 `stateful` is the interesting one, and it is the reason this is a module rather
 than a one-liner. The obvious rule -- "written at i+1 and read at a plain i" --
 over-collects badly: on max-flow it returns thirteen tensors where five are
-carried. `Lbl` is written at `i` and read at `i` within the same round, so
+carried. `Lbl` is written at `i` and read at `i` within the same generation, so
 reading it at a plain `i` says nothing about state. The rule needs all three
 clauses:
 
@@ -82,7 +82,7 @@ def generational(program: dict, gen_rank: str = "I",
 
 def stateful(program: dict, gen_rank: str = "I",
              alias: dict | None = None) -> set[str]:
-    """Tensors a round reads from the round before -- the loop-carried state.
+    """Tensors a generation reads from the generation before -- the loop-carried state.
 
     All three clauses are needed; see the module docstring for what happens
     without the third.

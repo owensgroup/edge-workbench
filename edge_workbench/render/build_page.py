@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import json, re, os, shutil, subprocess, sys
+import json, re, os, subprocess, sys
 from pathlib import Path
 
 # The page is built by EXECUTING THE SPECIFICATION. The driver runs the IR
@@ -27,37 +27,29 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
 from edge_workbench import paths                       # noqa: E402
 
-ALG = os.environ.get("EDGE_WORKBENCH_ALG") or paths.default()
+ALG = os.environ.get("EDGE_WORKBENCH_ALG") or "(unnamed)"
 HERE = str(paths.RENDER)                 # tool files: display.js, domain_views.js
 SPEC = str(paths.spec(ALG))              # IR program, display metadata
 OUT = os.environ.get("EDGE_WORKBENCH_OUT", os.path.join(str(paths.ROOT), "build", ALG))
-VERIFY = str(paths.TOOL / "verify")
 #: Set by `edge_workbench check` for an author's algorithm: their verifier.py.
 AUTHOR_VERIFIER = os.environ.get("EDGE_WORKBENCH_VERIFIER")
-TESTS = str(paths.TESTS)
-ALGTESTS = str(paths.algorithm(ALG) / "tests")
 os.makedirs(OUT, exist_ok=True)
 
 sys.path.insert(0, SPEC)
 import meta                                             # noqa: E402
-try:
-    import view                                          # noqa: E402
-except ModuleNotFoundError:
-    view = None          # optional: annotate falls back to generic phrasing
 
 from edge_workbench.driver import run as driver          # noqa: E402
 from edge_workbench.render import annotate as ann        # noqa: E402
 from edge_workbench.render import latex                  # noqa: E402
 from edge_workbench.render import action_prose           # noqa: E402
 from edge_workbench.render import tensor_notes           # noqa: E402
-from edge_workbench import tutorial as _tut              # noqa: E402
 from edge_workbench import coverage                      # noqa: E402
 from edge_workbench import tensor_facts                  # noqa: E402
 from edge_workbench import domain_shape                  # noqa: E402
 from edge_workbench import prepare                       # noqa: E402
 
-# What the author wrote, read ONCE by `python3 -m edge_workbench.prepare` and
-# committed as spec/authored.json. The build does not open the tutorial.
+# What the author wrote, read ONCE by `python3 -m edge_workbench check` into
+# spec/authored.json. The build does not open the tutorial.
 #
 # It used to. Meanings, tensor prose and the published answer all came out of
 # the .md while the page was being written, which made a build depend on which
@@ -91,8 +83,8 @@ def verify_meanings(cascade, meanings):
     labels = set(cascade.get("labels", {}))
     if not meanings:
         print("!! no per-Einsum meanings in spec/authored.json -- generic "
-              "captions will be used. Run `python3 -m edge_workbench.prepare "
-              "<tutorial.md> --spec algorithms/<alg>/spec`.", file=sys.stderr)
+              "captions will be used. Run `python3 -m edge_workbench check "
+              "<dir>`.", file=sys.stderr)
         return
     missing = sorted(labels - set(meanings))
     print(f"meanings      : {len(labels & set(meanings))}/{len(labels)} "
@@ -130,24 +122,20 @@ def verify_coverage(program, cascade, executed):
 
 
 def verify_algorithm():
-    """Run the algorithm's own verifier, if it has one.
+    """Run the author's verifier.py against this run.
 
     Coverage proves the spec ran. This is the other question: is what it
     produced right? Only the algorithm can answer that, so the verifier lives
-    with the algorithm in `algorithms/<alg>/verify/` and the tool only knows
-    how to run it.
+    beside the tutorial and the tool only knows how to run it.
 
-    Optional, because an algorithm nobody has written a verifier for should
-    still render. The skip is loud: a page whose answer nothing checked is
-    worth less than one whose answer something did, and whoever reads the
-    build log should be able to tell which they have.
+    Required: a page whose answer nothing checked is not published.
     """
-    # An author's own algorithm carries a `verifier.py` written to the
-    # contract in edge_workbench/verifier.py; the tool runs it against this
-    # spec. Algorithms in this repository carry their own script instead.
+    # `verifier.py` is written to the contract in edge_workbench/verifier.py;
+    # the tool runs it against this spec.
     if AUTHOR_VERIFIER:
         r=subprocess.run([sys.executable,"-m","edge_workbench.verifier",
-                          "--spec",SPEC,"--verifier",AUTHOR_VERIFIER,"-n","12"],
+                          "--spec",SPEC,"--verifier",AUTHOR_VERIFIER,
+                          "--slug",ALG],
                          capture_output=True,text=True,cwd=str(paths.ROOT))
         tail=[l for l in r.stdout.strip().splitlines() if l.strip()]
         print("answer check  :", tail[-1].strip() if tail else "(no output)")
@@ -156,20 +144,9 @@ def verify_algorithm():
             sys.exit(f"\nBUILD ABORTED: {ALG} failed its verifier.\n"
                      f"index.html was NOT written.")
         return
-    verifier=os.path.join(paths.algorithm(ALG),"verify","verify_algorithm.py")
-    if not os.path.exists(verifier):
-        print("!! no verifier for", ALG, "-- answer check SKIPPED", file=sys.stderr)
-        return
-    r=subprocess.run([sys.executable, verifier, "-n","12"],
-                     capture_output=True, text=True,
-                     cwd=os.path.dirname(verifier))
-    tail=[l for l in r.stdout.strip().splitlines() if l.strip()]
-    print("answer check  :", tail[-1].strip() if tail else "(no output)")
-    if r.returncode!=0:
-        sys.stdout.write(r.stdout); sys.stderr.write(r.stderr)
-        sys.exit(f"\nBUILD ABORTED: {ALG} failed its own verifier.\n"
-                 f"Run {verifier} directly for detail.\n"
-                 f"index.html was NOT written.")
+    sys.exit(f"\nBUILD ABORTED: {ALG} has no verifier.py. Run the page "
+             f"through `python3 -m edge_workbench check`, which supplies it.\n"
+             f"index.html was NOT written.")
 
 
 
@@ -186,22 +163,19 @@ verify_coverage(IR_PROGRAM, CASCADE, _run["executed"])
 verify_meanings(CASCADE, tutorial_meanings())
 verify_algorithm()
 
-NAMED_VIEW = (view.DOMAIN_VIEW if view and hasattr(view, "DOMAIN_VIEW")
-              else INSTANCE.get("domain", {}).get("view"))
+NAMED_VIEW = INSTANCE.get("domain", {}).get("view")
 
-# WHICH PICTURE THIS PROGRAM WANTS, derived from the program rather than
-# declared. The signal is where the rank-1 tensors live: max-flow's twelve are
+# WHICH PICTURE THIS PROGRAM WANTS: the tutorial's `ranks:` block when it has
+# one (carried in cascade.json), otherwise derived from the program. The
+# derivation's signal is where the rank-1 tensors live: max-flow's twelve are
 # all over U, so the two ranks of a rank-2 tensor index the same set and the
 # picture is a graph. Exact cover's split 17 on R and 6 on C, so they are
 # different sets and the picture is bipartite.
-#
-# This was computed and then ignored: `domainView` came from a hand-written
-# DOMAIN_VIEW in view.py or a `view` key in the instance, and the derivation
-# sat beside them unused -- which is the same as not having it, except more
-# reassuring. It is now the default when nobody names one, and `verify_view`
-# below makes a naming that CONTRADICTS it fail rather than silently win.
+# A `view` named in the instance that CONTRADICTS it fails below rather than
+# silently winning.
 DERIVED_VIEW = domain_shape.classify(
-    IR_PROGRAM, INSTANCE, CASCADE.get("generationalRank", "I"))
+    IR_PROGRAM, INSTANCE, CASCADE.get("generationalRank", "I"),
+    CASCADE.get("rankKinds"))
 
 # The left pane's heading. It was the literal word "Graph" for every
 # algorithm, which was true of the only algorithm there was. Exact cover has
@@ -220,7 +194,7 @@ PANEL_TITLE = {
 # about to be written and there is no stage left to report to.
 _view_problems = domain_shape.disagreement(
     NAMED_VIEW, IR_PROGRAM, INSTANCE, CASCADE.get('generationalRank', 'I'),
-    where=f'{ALG}/spec')
+    where=f'{ALG}/spec', kinds=CASCADE.get('rankKinds'))
 if _view_problems:
     for _p in _view_problems:
         print(f"!! {_p}", file=sys.stderr)
@@ -234,7 +208,7 @@ LATEX=latex.render_all(IR_PROGRAM, CASCADE, ALIAS)
 # Absent for a spec built without it, which then shows the IR's form.
 _written_path=paths.spec(ALG)/"written.json"
 WRITTEN=json.loads(_written_path.read_text()) if _written_path.exists() else {}
-T=ann.annotate({"steps":_run["steps"]}, meta, view, LATEX)
+T=ann.annotate({"steps":_run["steps"]}, meta, LATEX)
 T["iterations"]=_run["generations"]
 # In a bipartite picture a node id carries its side (`R:0`, `C:2`), because
 # row 0 and column 0 are different nodes. The generic highlight speaks bare
@@ -251,13 +225,10 @@ if (NAMED_VIEW or DERIVED_VIEW["view"]) == domain_shape.BIPARTITE:
             _hl["edges"] = [[domain_shape.qualify(_rk[0], a),
                              domain_shape.qualify(_rk[1], b)]
                             for a, b in _hl.get("edges", [])]
-T["graph"]=(view.graph(INSTANCE) if view and hasattr(view,"graph")
-            else INSTANCE.get("domain",{}).get("graph"))
+T["graph"]=INSTANCE.get("domain",{}).get("graph")
 T["note"]=("computed by edge-core-ir's reference evaluator over the instance; "
            "no part of this page comes from a hand-written implementation")
-if view and hasattr(view,"headline"):
-    T.update(view.headline(T["steps"][-1]["state"]))
-elif AUTHOR_VERIFIER:
+if AUTHOR_VERIFIER:
     # The number in the corner is the verifier's reading of the final state:
     # the same function the answer gate just checked against `solve`.
     from edge_workbench import verifier as _verifier
@@ -298,8 +269,8 @@ EINSUM_IDX=CASCADE.get("labels",{})
 def trace_header(T):
     """Name the renderer this trace wants, and nothing else.
 
-    This used to carry a whole compare-mode header -- variant, rounds,
-    operation counts, per-step `round` and `opKind` -- so two traces could be
+    This used to carry a whole compare-mode header -- variant, generations,
+    operation counts, per-step generation and `opKind` -- so two traces could be
     raced against each other. Nothing races any more, and every one of those
     fields was dead: the page reads exactly one thing from here.
 

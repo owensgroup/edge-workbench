@@ -48,10 +48,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from edge_workbench import (
+    approval,
     builder_prompt,
     domain_shape,
     prepare,
     propose,
+    rank_kinds,
     review,
     spec_check,
     tensor_facts,
@@ -189,7 +191,7 @@ def report(a: Author, stages: list[Stage], wrote: bool) -> str:
 
 # ------------------------------------------------------------- stages ----
 
-def stage_inputs(a: Author) -> Stage:
+def stage_inputs(a: Author, committed_only: bool = False) -> Stage:
     s = Stage("inputs")
     for p, what in ((a.edge, "einsum.edge"), (a.verifier, "verifier.py")):
         if not p.exists():
@@ -197,9 +199,19 @@ def stage_inputs(a: Author) -> Stage:
     if a.edge.exists() and not parse_edge_file(a.edge):
         s.findings.append("einsum.edge has no labelled Einsums (`# E01: ...`)")
     if a.verifier.exists():
-        s.findings += verifier.contract_problems(a.verifier)
+        # Two separate questions, both always asked: does the verifier meet
+        # its contract, and has a person approved exactly this text?
+        s.findings += verifier.contract_problems(a.verifier, a.slug)
+        unapproved, todo = approval.problems(a.dir, committed_only)
+        s.findings += unapproved
+        s.next += todo
     s.state = "fail" if s.findings else "ok"
-    s.summary = (f"{a.tutorial.name}, einsum.edge, verifier.py"
+    said = verifier.declared(a.verifier) if a.verifier.exists() else {}
+    s.summary = (f"{a.tutorial.name}, einsum.edge, verifier.py "
+                 f"({said.get('KIND')}: {said.get('METHOD')}; approved"
+                 + (f"; ledger from ${approval.LEDGER_ENV}"
+                    if approval.ledger_overridden() and not committed_only
+                    else "") + ")"
                  if not s.findings else "see below")
     return s
 
@@ -210,14 +222,28 @@ def stage_tutorial(a: Author) -> Stage:
         s.findings = tutorial_vs_edge.compare(a.tutorial, a.edge)
     except tut.TutorialError as e:
         s.findings = [str(e)]
+    cascade_findings = len(s.findings)
+    kinds = rank_kinds.read(a.tutorial)
+    rank_findings = rank_kinds.problems(kinds, parse_declarations(a.edge))
+    s.findings += rank_findings
     s.state = "fail" if s.findings else "ok"
-    s.summary = ("the tutorial's cascade matches einsum.edge" if not s.findings
-                 else f"{len(s.findings)} disagreement(s) between the tutorial "
-                      f"and einsum.edge")
-    if s.findings:
+    parts = []
+    if cascade_findings:
+        parts.append(f"{cascade_findings} disagreement(s) between the "
+                     f"tutorial and einsum.edge")
+    if rank_findings:
+        parts.append(f"{len(rank_findings)} problem(s) in the `ranks:` block")
+    s.summary = ("; ".join(parts) if parts
+                 else "the tutorial's cascade matches einsum.edge"
+                      + ("; ranks: declared" if kinds else ""))
+    if cascade_findings:
         s.next.append(
             "Make the tutorial's `edge_expression` and einsum.edge agree. Both "
             "are sources of truth, so decide which one is wrong in each case.")
+    if rank_findings:
+        s.next.append(
+            "Give every rank in einsum.edge one kind from the list, in the "
+            "front matter's `ranks:` block (AUTHORING.md, \"The tutorial\").")
     return s
 
 
@@ -328,6 +354,10 @@ def derive_cascade(a: Author, program: dict) -> tuple[dict, list[str]]:
         "initLabel": "init",
         "stopLabel": "stop",
         "displayNames": alias,
+        # The tutorial's `ranks:` block, verbatim (checked at the tutorial
+        # stage). Absent when the tutorial declares none.
+        **({"rankKinds": kinds} if (kinds := rank_kinds.read(a.tutorial))
+           else {}),
         "labels": labels,
         "selectors": {n: (n if n in RANKED else {"rule": "seeded", "seed": 0})
                       for n in free},
@@ -541,16 +571,14 @@ def make_instance(artifact: dict, program: dict, cascade: dict) -> dict:
     """
     ex = artifact["example"]
     gen = cascade.get("generationalRank", "I")
-    if ex.get("kind") in ("graph", "matrix", None):
-        inst = tut.to_instance(ex)                 # the older, shaped forms
-    else:
-        inst = {k: ex.get(k, {}) for k in ("extent", "scalars", "tensors")}
-        if ex.get("coordSets"):
-            inst["coordSets"] = ex["coordSets"]
+    inst = {k: ex.get(k, {}) for k in ("extent", "scalars", "tensors")}
+    if ex.get("coordSets"):
+        inst["coordSets"] = ex["coordSets"]
     if "expect" in ex:
         inst["expect"] = ex["expect"]
 
-    shape = domain_shape.classify(program, inst, gen)
+    kinds = cascade.get("rankKinds")
+    shape = domain_shape.classify(program, inst, gen, kinds)
     decls = {d["name"]: d for d in program.get("declarations", [])}
 
     def over(name):
@@ -558,8 +586,15 @@ def make_instance(artifact: dict, program: dict, cascade: dict) -> dict:
                 if r["name"] != gen]
 
     tensors = inst.get("tensors", {})
+    # A tensor over a node rank and a `spatial` rank (A*'s L_{S, XY}) gives
+    # each vertex's location; it is not the edge tensor.
+    placing = next((n for n in tensor_facts.inputs(program, gen)
+                    if len(over(n)) == 2 and n in tensors
+                    and rank_kinds.is_spatial(kinds, over(n)[1])), None)
     pair = next((n for n in tensor_facts.inputs(program, gen)
-                 if len(over(n)) == 2 and n in tensors), None)
+                 if len(over(n)) == 2 and n in tensors
+                 and not any(rank_kinds.is_spatial(kinds, r)
+                             for r in over(n))), None)
     domain: dict = {"view": shape["view"]}
     extent = inst.get("extent", {})
 
@@ -582,7 +617,7 @@ def make_instance(artifact: dict, program: dict, cascade: dict) -> dict:
         domain["positions"] = domain_shape.bipartite_positions(
             extent.get(left, 0), extent.get(right, 0), left, right)
     elif shape["view"] == domain_shape.GRAPH:
-        rank = next((r for r in tensor_facts.node_ranks(program, gen)), None)
+        rank = _node_rank(program, gen, kinds, rank_kinds.VERTEX)
         n = int(extent.get(rank, 0))
         edges = []
         if pair:
@@ -598,9 +633,10 @@ def make_instance(artifact: dict, program: dict, cascade: dict) -> dict:
         start = marks[0] if marks else 0
         end = marks[-1] if len(marks) > 1 else None
         domain["graph"] = {"nodes": list(range(n)), "edges": edges}
-        domain["positions"] = _layered(n, edges, start, end)
+        domain["positions"] = (_placed(n, tensors[placing]) if placing
+                               else _layered(n, edges, start, end))
     else:
-        rank = (tensor_facts.node_ranks(program, gen) or ["?"])[0]
+        rank = _node_rank(program, gen, kinds, rank_kinds.POSITION) or "?"
         domain["graph"] = {"nodes": list(range(int(extent.get(rank, 0)))),
                            "edges": []}
         domain["positions"] = {}
@@ -615,6 +651,48 @@ def make_instance(artifact: dict, program: dict, cascade: dict) -> dict:
     inst["_comment"] = ["GENERATED by edge_workbench check from the worked "
                         "example in authored.json. Do not edit."]
     return inst
+
+
+def _node_rank(program, gen, kinds, want):
+    """The rank whose coordinates are the picture's nodes.
+
+    With a `ranks:` block, the first rank declared `want`; without one, the
+    first rank any tensor is indexed by, as before. Never a `spatial` rank.
+    """
+    ranks = rank_kinds.node_ranks(kinds, tensor_facts.node_ranks(program, gen))
+    if kinds:
+        ranks = [r for r in ranks if kinds.get(r) == want] or ranks
+    return ranks[0] if ranks else None
+
+
+def _placed(n, coords, width=520, height=320, pad=45):
+    """Positions from a vertex-by-coordinate tensor, scaled to the canvas.
+
+    Keys are `"v,k"`: coordinate k of vertex v; the first two coordinates are
+    x and y. y is flipped so a larger y is drawn higher, as on a map. A vertex
+    the tensor does not place goes on the bottom edge rather than vanishing.
+    """
+    pts: dict[int, list[float]] = {}
+    for key, val in coords.items():
+        v, k = (int(x) for x in key.split(","))
+        if k < 2:
+            pts.setdefault(v, [0.0, 0.0])[k] = float(val)
+    if not pts:
+        return {}
+    xs = [p[0] for p in pts.values()]
+    ys = [p[1] for p in pts.values()]
+    sx = (width - 2 * pad) / ((max(xs) - min(xs)) or 1)
+    sy = (height - 2 * pad) / ((max(ys) - min(ys)) or 1)
+    out = {}
+    for v in range(n):
+        if v in pts:
+            x, y = pts[v]
+            out[v] = [round(pad + (x - min(xs)) * sx),
+                      round(height - pad - (y - min(ys)) * sy)]
+        else:
+            out[v] = [round(pad + v * (width - 2 * pad) / max(n - 1, 1)),
+                      height - pad // 2]
+    return out
 
 
 def _layered(n, edges, start, end):
@@ -695,12 +773,26 @@ def stage_instance(a: Author, artifact: dict, program: dict,
     s.findings = verifier.instance_problems(inst, program, gen)
     s.findings += domain_shape.disagreement(
         (artifact.get("view") or {}).get("view"), program, inst, gen,
-        where="the tutorial-data reply's `view`")
+        where="the tutorial-data reply's `view`",
+        kinds=cascade.get("rankKinds"))
+    kinds_note = domain_shape.declared_vs_inferred(
+        cascade.get("rankKinds"), program, inst, gen)
     (a.spec / "instance.json").write_text(json.dumps(inst, indent=1) + "\n")
     write_meta(a, program, cascade)
+    # The verifier's half of this stage: its random instances supply what
+    # the program reads, and the published answer is the approved one.
+    s.findings += verifier.random_instance_problems(a.verifier, a.slug,
+                                                    program, gen)
+    expect = inst.get("expect") or {}
+    changed, todo = approval.answer_problems(a.dir, "answer" in expect,
+                                             expect.get("answer"))
+    s.findings += changed
+    s.next += todo
     s.state = "fail" if s.findings else "ok"
     s.summary = (f"{inst['domain']['view']} view; supplies "
                  f"{sorted(set(inst.get('tensors', {})) | set(inst.get('scalars', {})) | set(inst.get('coordSets', {})))}")
+    if kinds_note:
+        s.summary += f"; note: {kinds_note}"
     return s
 
 
@@ -745,13 +837,14 @@ def stage_page(a: Author) -> tuple[Stage, bool]:
 
 # ---------------------------------------------------------------- run ----
 
-def check(directory: Path, tutorial: Path | None = None) -> int:
+def check(directory: Path, tutorial: Path | None = None,
+          committed_only: bool = False) -> int:
     a = locate(directory, tutorial)
     # A stale page must never sit beside a failing check, looking current.
     stale = a.dir / "index.html"
     stages: list[Stage] = []
 
-    inputs = stage_inputs(a)
+    inputs = stage_inputs(a, committed_only)
     stages.append(inputs)
     if inputs.state == "fail":
         return _finish(a, stages, stale)
@@ -806,5 +899,45 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--tutorial", type=Path, default=None,
                    help="the tutorial .md, when it does not live in DIR "
                         "(a site collection is often one flat directory)")
+    c.add_argument("--committed-only", action="store_true",
+                   help="count only a committed verifier.lock as approval, "
+                        "not approvals recorded on this machine (tests, CI)")
+    v = sub.add_parser("approve-verifier",
+                       help="a person approves verifier.py as it is now; "
+                            "interactive, needs a terminal")
+    v.add_argument("dir", type=Path)
+    v.add_argument("--tutorial", type=Path, default=None)
+    k = sub.add_parser("verify-instance",
+                       help="rerun one random instance of the answer check "
+                            "and print it")
+    k.add_argument("dir", type=Path)
+    k.add_argument("k", type=int, help="which random instance, from 0")
+    k.add_argument("--tutorial", type=Path, default=None)
+    p = sub.add_parser("publish",
+                       help="run check, then copy index.html into the site "
+                            "and link it from the tutorial")
+    p.add_argument("dir", type=Path)
+    p.add_argument("--tutorial", type=Path, default=None)
+    p.add_argument("--site", type=Path, default=None,
+                   help="the site checkout (default: $EDGE_WORKBENCH_SITE, "
+                        "else edge-algorithms beside this repository)")
+    p.add_argument("--with-tutorial", action="store_true",
+                   help="also replace the site's tutorial with this one")
+    p.add_argument("--committed-only", action="store_true")
     args = ap.parse_args(argv)
-    return check(args.dir, args.tutorial)
+    if args.cmd == "publish":
+        from edge_workbench import publish
+        return publish.publish(args.dir, args.site, args.tutorial,
+                               args.with_tutorial, args.committed_only)
+    if args.cmd == "approve-verifier":
+        a = locate(args.dir, args.tutorial)
+        return approval.approve(a.dir, a.slug)
+    if args.cmd == "verify-instance":
+        a = locate(args.dir, args.tutorial)
+        if not (a.spec / "instance.json").exists():
+            raise SystemExit(f"run `python3 -m edge_workbench check {a.dir}` "
+                             f"first: there is no program to run yet")
+        return verifier.main(["--spec", str(a.spec), "--verifier",
+                              str(a.verifier), "--slug", a.slug,
+                              "--instance", str(args.k)])
+    return check(args.dir, args.tutorial, args.committed_only)

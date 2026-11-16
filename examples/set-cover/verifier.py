@@ -2,6 +2,8 @@
 from itertools import combinations
 
 ANSWER_LABEL = "solutions"
+KIND = "definition"
+METHOD = "subset enumeration"
 
 
 def _matrix(instance):

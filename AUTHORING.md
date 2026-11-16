@@ -58,6 +58,32 @@ the model in step 4, quoting your text, and any without an `Einsum meaning:`
 gets a sentence generated from the program. Nothing checks that your sentence
 matches the Einsum, so that part is yours to keep true.
 
+Say what each rank is in a `ranks:` block in the front matter. This decides the
+picture:
+
+```yaml
+ranks:
+  I: generational  # the generational (iterative) rank
+  S: vertex
+  D: vertex
+  XY: spatial     # A*: L_{S, XY} is each vertex's location, not an edge
+```
+
+| kind | means | picture |
+|---|---|---|
+| `generational` | the generational (iterative) rank; at most one | one generation at a time |
+| `vertex` | a vertex of a graph; all vertex ranks are one vertex set | graph |
+| `set`, `element` | the two sides of an incidence matrix (exact cover's rows and columns) | bipartite |
+| `position` | a position in a sequence | sequence |
+| `spatial` | an axis of physical space (A*'s `XY`) | gives each vertex's location |
+
+Every rank in einsum.edge needs a kind, and a word not in the table stops the
+run. Without a `ranks:` block the picture is inferred from the tensors, which
+works for graphs and bipartite graphs but cannot tell a DP table or a
+location tensor from an edge tensor. When your declaration and the inference
+disagree, the instance stage says so in its summary; that is a note, not a
+failure. Every tensor is also shown as a grid, whatever the picture.
+
 ### einsum.edge
 
 The same cascade as your tutorial's `edge_expression`, in ASCII, with every
@@ -106,12 +132,12 @@ Complete, passing examples are in [`examples/`](examples/); more `einsum.edge` f
 ### verifier.py
 
 Tells the workbench what the right answer is, by a route that is not your
-cascade. Prefer a *different* algorithm for the same problem (Edmonds-Karp for
-push-relabel, brute force for exact cover): a second implementation of the
-same method shares your misunderstandings of it.
+cascade. It is one file; it may not import a module beside it.
 
 ```python
 ANSWER_LABEL = "max flow"          # what the page calls the answer
+KIND   = "different-algorithm"     # which kind of verifier this is (below)
+METHOD = "Edmonds-Karp"            # what `solve` is, by name
 
 def solve(instance):
     """The answer, computed independently."""
@@ -119,20 +145,99 @@ def solve(instance):
 def answer(final, instance):
     """The answer, read off the cascade's final tensors."""
 
-def random_instance(rng):          # optional, strongly recommended
+def random_instance(rng):
     """A fresh problem in the same shape as the instance."""
+
+def certify(final, instance):      # required only when KIND = "certificate"
+    """Everything wrong with the cascade's result; [] when it is valid."""
 ```
 
+**Choose a kind.** `KIND` says how `solve` gets its answer:
+
+| KIND | `solve` is | example |
+|---|---|---|
+| `definition` | the problem's definition, checked by enumeration | every subset of rows, for exact cover |
+| `library` | a trusted library's implementation | `networkx.maximum_flow`, `scipy.sparse.csgraph.shortest_path` |
+| `certificate` | anything, plus `certify`, which checks the cascade's own result is valid | a flow that conserves and saturates a cut |
+| `different-algorithm` | a different algorithm for the same problem, written in the file | Edmonds-Karp for push-relabel |
+| `user-reference` | a reference implementation you supply; `METHOD` names where it came from | `"dfs.py from the course repo"` |
+
+Do not use a second implementation of the cascade's own method: it shares
+your misunderstandings of it. If an AI agent is helping you, it offers you
+this choice; if none fits, it builds the verifier from source code you give it
+(`user-reference`). The agent never writes the verifier on its own say-so, and
+never edits one you have approved.
+
+**What is compared is whatever your tutorial states as its answer.** If the
+tutorial publishes the set of vertices a DFS reaches, `solve` and `answer`
+return that set; if it publishes the visit order, they return the order (and
+the order must then be one every valid run produces). Where a free choice
+gives different valid results, compare something they share (BFS depths, not
+parents).
+
 - `instance` is `{"extent": {...}, "scalars": {...}, "tensors": {...}}`,
-  tensors keyed by coordinate strings: `{"C": {"0,1": 3, "0,2": 2}}`.
+  tensors keyed by coordinate strings: `{"C": {"0,1": 3, "0,2": 2}}`, plus
+  `coordSets` if an Einsum is restricted to a named set.
 - `final` is `{tensor: {coordinate: value}}` after the last step.
 - If the answer is built up along the way rather than left in the final state
-  (exact cover finds one solution per success), give `answer` a third
-  parameter, `steps`: every step of the run, each with `output` and `state`.
+  (exact cover finds one solution per success), give `answer` (or `certify`) a
+  third parameter, `steps`: every step of the run, each with `output` and `state`.
 - Answers are compared after turning sets and tuples into sorted lists.
+
+**Rules `check` enforces**, at the inputs stage, before your cascade runs:
+
+- **Imports:** `networkx`, `scipy`, `numpy`, and the computational standard
+  modules (`math`, `itertools`, `collections`, `heapq`, `functools`,
+  `fractions`, `bisect`, `operator`, `statistics`, `decimal`, ...). Not
+  `random` or `time` (use the `rng` you are given), not `edge_ir` or
+  `edge_workbench`, no files, network or subprocesses, no `open`, `eval`,
+  `exec`, `__import__`. A library need not be installed everywhere; where it
+  is missing, `check` says what to install.
+- **Separate routes:** `solve` must not call `answer` or `certify`, directly
+  or through a helper, nor they `solve`.
+- **`random_instance(rng)`** takes exactly the `rng` and is deterministic:
+  the same seed gives the same instance. `check` makes 12, instance *k* from
+  its own seed, so one can be rerun alone:
+  `python3 -m edge_workbench verify-instance my-algorithm 7`.
+- **Small and varied:** extents from 1 to 12; at least 10 of the 12 instances
+  differ, with at least 2 different sizes and 3 different answers.
+- **`answer` reads the cascade:** given an empty final state it must not
+  already agree with `solve` on every instance. Instances with no solution are
+  fine; the report counts how many have that trivial answer.
 
 The full contract is at the top of
 [`edge_workbench/verifier.py`](edge_workbench/verifier.py).
+
+### Approving the verifier
+
+The verifier is what your cascade is judged against, so it is pinned once you
+have read it. In a terminal, yourself:
+
+```
+python3 -m edge_workbench approve-verifier path/to/my-algorithm
+```
+
+It shows the file (or what changed since you last approved it), its KIND and
+METHOD, the answer your tutorial publishes, and the contract checks, and asks
+you to type the METHOD to confirm. It writes `verifier.lock` beside
+`verifier.py`; commit the two together.
+
+`check` then refuses to go on, and says which of these happened, when:
+
+- `verifier.py` was never approved (there is no `verifier.lock`);
+- `verifier.py` has changed since it was approved;
+- `verifier.lock` was not written by `approve-verifier` (written or edited by hand);
+- the answer your tutorial publishes for its worked example has changed.
+
+Each is fixed the same way: a person reads the change and runs
+`approve-verifier` again. The command only runs at a terminal, so an AI agent
+cannot run it; an agent that meets one of these stops and tells you. You will
+be asked twice for a new tutorial: once for the verifier, and once more when
+the tutorial-data step first records the published answer.
+
+An approval counts if `verifier.lock` is the committed one, or was made on
+this machine (recorded in `~/.config/edge-workbench/approved.json`).
+`check --committed-only` counts only the committed one; the test suite uses it.
 
 ## 3. Run the check
 
@@ -176,7 +281,7 @@ Pasting costs roughly 10–20 cents of model usage per algorithm, once.
 ```
 edge-workbench check: set-cover
 
-  ✓ inputs         set_cover.md, einsum.edge, verifier.py
+  ✓ inputs         set_cover.md, einsum.edge, verifier.py (definition: subset enumeration; approved)
   ✓ tutorial       the tutorial's cascade matches einsum.edge
   ✓ builder        build_set_cover_program.py
   ✓ program        20 Einsums -> 25 IR nodes; valid IR; operators and declarations match einsum.edge
@@ -189,22 +294,23 @@ index.html written: index.html
 
 | stage | what it means when it fails |
 |---|---|
-| inputs | a file is missing, `einsum.edge` has no labels, or `verifier.py` lacks `solve`/`answer` |
+| inputs | a file is missing, `einsum.edge` has no labels, `verifier.py` breaks one of its rules (each is listed), or the verifier is not approved as it stands |
 | tutorial | your tutorial and `einsum.edge` disagree; each difference is listed. Decide which is wrong. |
 | builder / program | the model's builder does not match `einsum.edge`; paste the rewritten prompt |
 | tutorial data | a meaning or the example does not quote your tutorial, or the example's inputs are wrong |
-| instance | the worked example does not supply what the program reads |
+| instance | the worked example, or a random instance, does not supply what the program reads; or the published answer is not the approved one |
 | page — coverage | an Einsum never executed |
-| page — answer check | **your cascade gives a different answer from your verifier** — on your worked example, on the answer your tutorial publishes, or on a random instance. The failing instance is printed. |
+| page — answer check | **your cascade gives a different answer from your verifier** — on your worked example, on the answer your tutorial publishes, or on a random instance. The line reads `random instances: k/12 agree`; rerun a failing one alone with `verify-instance`. |
 
 The answer check is the one that finds mistakes in a specification. Exact
 cover's tutorial wrote `TPath = Path · d* :: /\ <(∩)`, which turns depths into
 `True`; every structural check passed and the verifier rejected it on 10 of 14
 instances.
 
-The picture is chosen from your tensors: a **graph** when every rank-1 tensor
-is over the same rank, **bipartite** when they sit on two ranks (rows and
-columns), a **sequence** when there is no rank-2 tensor.
+The picture comes from your `ranks:` block when the tutorial has one (see "The
+tutorial"). Without one it is inferred from your tensors: a **graph** when
+every rank-1 tensor is over the same rank, **bipartite** when they sit on two
+ranks (rows and columns), a **sequence** when there is no rank-2 tensor.
 
 ## 6. What you get
 

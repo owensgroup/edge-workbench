@@ -21,8 +21,10 @@
 - Ranking operators (`select-min-val`, `select-max-val`, ...) are part of the
   algorithm. Any other populate name is a free choice and runs as seeded
   `select-any`; an unknown name stops the run.
-- The picture (graph, bipartite, sequence) is decided from the tensors' ranks
-  in `domain_shape.py`, not by the model.
+- The picture (graph, bipartite, sequence) is decided by the tutorial's
+  `ranks:` block (`rank_kinds.py`, closed vocabulary, checked against
+  einsum.edge) when present, otherwise inferred from the tensors' ranks in
+  `domain_shape.py`; never by the model.
 - The verifier should use a different algorithm from the cascade, and compare
   something every valid run shares (BFS depths, not parents).
 

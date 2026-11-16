@@ -57,8 +57,8 @@ def artifact() -> dict:
         "example": None,
         "meanings": {},
         "tensorNotes": {},
-        "gaps": ["meanings: no `einsum_meanings` block.",
-                 "example: no `working_example_data` block."],
+        "gaps": ["meanings: the tutorial-data step fills any Einsum the walkthrough does not explain.",
+                 "example: the worked example is prose only."],
     }
 
 

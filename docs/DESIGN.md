@@ -65,7 +65,7 @@ only at the start.
 | 4 | Gaps in the language become issues, never local patches (except issues 1, 2, 7) | Semantics belong to whoever defines the language | Sanjana |
 | 5 | An independent verifier is required, preferably a different algorithm | A second copy of the same method shares its mistakes | Sanjana; "different algorithm" Claude |
 | 6 | A model fills toolchain gaps (builder, missing meanings) until they're built | Avoids building a whole compiler first | Sanjana |
-| 7 | Author-run and paste-based, no API in CI | Cost and control; the public repo stays clean | Sanjana |
+| 7 | Author-run, no API in CI: pasted into a chat, or answered in-session by a local agent with the skill (see 32) | Cost and control; the public repo stays clean | Sanjana |
 | 8 | Never change an author's Einsum; show sub-steps as labelled parts | The page must teach what the author wrote | Sanjana |
 | 9 | Fixes must be generic | The goal is robustness for future algorithms | Sanjana |
 | 10 | Free choices stay free (random), never fixed to "lowest index" | Fixing them changes what the spec claims | Sanjana; seeded randomness Claude |
@@ -81,7 +81,16 @@ only at the start.
 | 20 | The worked example comes from the tutorial; model text must quote it | Every model sentence can be checked against the author's | Sanjana (source); Claude (quoting) |
 | 21 | Ranking operators are part of the algorithm; unknown names stop the run | Guessing an operator would change the algorithm | Claude |
 | 22 | One static `index.html`; replies saved so reruns are free | Easy to host and review | Claude |
-| 23 | The authoring skill guides; the author writes the Einsums (to revisit for AI drafting) | Teaching, not ghost-writing | Sanjana |
+| 23 | ~~The authoring skill guides; the author writes the Einsums~~ Superseded by 32 | Teaching, not ghost-writing | Sanjana |
+| 24 | Forging a verifier approval need only take a deliberate, visible, out-of-repo act; no server | Stops "fix the check by editing the verifier" without infrastructure | Sanjana |
+| 25 | In the AI flow the user chooses the verifier from a catalogue of kinds; if none fits it is built from source the user supplies (`user-reference`), and is approved like any other | The verifier must not come from the AI that wrote the spec | Sanjana |
+| 26 | A verifier may import networkx, scipy, numpy and computational stdlib only; libraries need not be installed | A trusted library is the most independent verifier there is | Sanjana |
+| 27 | The tutorial's published answer is pinned with the verifier; changing it needs the same approval | Otherwise the expected answer is the cheap thing to edit | Sanjana |
+| 28 | What is compared is whatever the tutorial states as its answer (reached set vs visit order) | The tutorial is the claim being checked | Sanjana |
+| 29 | `verifier.lock` (hash of verifier.py and of the published answer, KIND, METHOD, approver) must be HEAD's or in a ledger under `~/.config`; `approve-verifier` needs a terminal and the METHOD typed; `--committed-only` for tests | Implements 24 and 27 | Claude |
+| 30 | The verifier is one file, read as text before it is imported: import allowlist, no `open`/`eval`/`exec`, `solve` and `answer`/`certify` share no route | Makes the hash cover the whole verifier; keeps the two answers independent | Claude |
+| 31 | 12 random instances, instance k seeded by `slug:k`; gates on determinism, size, diversity and an `answer` that reads the cascade; all `solve` results computed before any cascade runs; the page line reports `k/12 agree` | A generator that makes one easy instance twelve times proves nothing | Claude |
+| 32 | The skill drafts everything from a named algorithm, pseudocode or a program, answers `check`'s model steps in-session and runs `check` in a loop; it asks the author whenever something is unclear, and stops at three checkpoints: (A) pseudocode, worked example and its expected answer; (B) the cascade; (C) the verifier, which the author chooses and approves in their own terminal. After B the agent may not change an Einsum, the example or its answer without a yes, and never touches the verifier, lock or ledger | One agent writing the spec, example, answer and verifier would share one misunderstanding and agree with itself; the anchors it cannot control are the evaluator, the approved verifier, its random instances and the author's checkpoints | Sanjana; checkpoints Claude |
 
 ## What worked
 

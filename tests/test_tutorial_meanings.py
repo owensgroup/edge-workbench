@@ -13,6 +13,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from approval_fixture import approve_in_tmp  # noqa: E402
+from edge_workbench.approval import LEDGER_ENV  # noqa: E402
 
 from edge_workbench import author, spec_check, tutorial as tut, tutorial_vs_edge  # noqa: E402
 
@@ -87,6 +91,14 @@ def test_explaining_an_einsum_twice_is_refused(tmp_path):
         _read(md)
 
 
+def _approved(md: Path, tmp_path: Path, monkeypatch) -> None:
+    """These tests are about meanings; the copy's verifier is approved in a
+    throwaway ledger so `check` gets as far as the page."""
+    ledger = tmp_path / "approved.json"
+    approve_in_tmp(md.parent, ledger)
+    monkeypatch.setenv(LEDGER_ENV, str(ledger))
+
+
 def _page_steps(path: Path) -> dict:
     text = path.read_text()
     data = text[text.index("{", text.index("const T={")):]
@@ -94,12 +106,13 @@ def _page_steps(path: Path) -> dict:
     return {s["einsum"]: s for s in reversed(steps)}
 
 
-def test_the_page_prefers_the_tutorial_and_keeps_the_rest(tmp_path):
+def test_the_page_prefers_the_tutorial_and_keeps_the_rest(tmp_path, monkeypatch):
     if spec_check.upstream() is None:
         pytest.skip("no edge-core-ir checkout")
     md = _tutorial(tmp_path, (E01, (
         "  **Graph meaning:** Try relaxing every edge into $d$.\n\n"
         "  **Einsum meaning:** Take the minimum over all $s$.")))
+    _approved(md, tmp_path, monkeypatch)
     assert author.main(["check", str(md.parent)]) == 0
     steps = _page_steps(md.parent / "index.html")
     assert steps["E01"]["graphMeaning"] == "Try relaxing every edge into $d$."
@@ -107,7 +120,7 @@ def test_the_page_prefers_the_tutorial_and_keeps_the_rest(tmp_path):
     assert re.match(r"For each d of C, check", steps["E02"]["einsumMeaning"])
 
 
-def test_only_the_unexplained_einsums_go_to_the_model(tmp_path):
+def test_only_the_unexplained_einsums_go_to_the_model(tmp_path, monkeypatch):
     if spec_check.upstream() is None:
         pytest.skip("no edge-core-ir checkout")
     md = _tutorial(tmp_path, (E01, "  **Graph meaning:** Try every edge."))
@@ -115,6 +128,7 @@ def test_only_the_unexplained_einsums_go_to_the_model(tmp_path):
     artifact = json.loads(spec.read_text())
     del artifact["meanings"]["E02"]
     spec.write_text(json.dumps(artifact))
+    _approved(md, tmp_path, monkeypatch)
     assert author.main(["check", str(md.parent)]) != 0
     prompt = (md.parent / "workbench" / "prompts" / "tutorial-data.txt").read_text()
     assert "meanings: nothing for E02" in prompt

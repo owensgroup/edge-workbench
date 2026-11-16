@@ -1,0 +1,35 @@
+# BFS from CLRS 22.2 (depths and parents), one level per generation.
+
+- Tensors
+G^{S = |V|, D = |V|}                 -> integer, empty = 0
+F^{I, S = |V|}                       -> integer, empty = inf
+T^{I, D = |V|}                       -> integer, empty = inf
+P^{I, D = |V|}                       -> Boolean, empty = False
+ParentCand^{I, S = |V|, D = |V|}     -> integer, empty = 0
+NewParent^{I, S = |V|, D = |V|}      -> integer, empty = 0
+Parent^{I, S = |V|, D = |V|}         -> integer, empty = 0
+Depth^{I, D = |V|}                   -> integer, empty = inf
+
+- Initializations
+G      -> <user-specified>
+source -> <user-specified>     # coordinate set over rank S
+F_{0, s : s in source} = 0
+P_{0, d : d in source} = True
+Depth_{0, d : d in source} = 0
+
+- Extended Einsums
+# E01: candidate depths one hop from the frontier
+T_{i, d} = G_{s, d} . F_{i, s} :: /\_s +(∩) \/_s min(∪)
+# E02: keep the white (unvisited) vertices: the next frontier
+F_{i+1, d} = T_{i, d} . not P_{i, d} :: /\_d <-(∩)
+# E03: frontier edges into newly discovered vertices
+ParentCand_{i, s, d} = (G_{s, d} .^1 F_{i, s})_{i, s, d} .^2 F_{i+1, d} :: /\^1 <-(∩) /\^2 <-(∩)
+# E04: one parent per new vertex
+NewParent_{i, s*, d} = ParentCand_{i, s, d} :: <<<_{s*} 1(pick-parent)
+# E05: record the parents
+Parent_{i+1, s, d} = Parent_{i, s, d} . NewParent_{i, s, d} :: /\_d <<(∪)
+# E06: colour the new frontier gray
+P_{i+1, d} = P_{i, d} . F_{i+1, d} :: /\_d OR(∪)
+# E07: record the depths
+Depth_{i+1, d} = Depth_{i, d} . F_{i+1, d} :: /\_d <<(∪)
+<> : ||F_{i+1}|| == 0

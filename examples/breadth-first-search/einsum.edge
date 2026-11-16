@@ -1,0 +1,23 @@
+# Breadth-First Search (depth-tracking) -- ASCII surface form of the
+# tutorial's edge_expression, transcribed line for line.
+
+- Tensors
+G^{S = |V|, D = |V|}  -> integer, empty = 0
+F^{I, S = |V|}        -> integer, empty = inf
+T^{I, D = |V|}        -> integer, empty = inf
+P^{I, D = |V|}        -> Boolean, empty = False
+
+- Initializations
+G  -> <user-specified>
+id -> <user-specified>     # coordinate set over rank S: the sources
+F_{0, s : s in id} = 0
+P_{0, d : d in id} = True
+
+- Extended Einsums
+# E01: advance the frontier one hop
+T_{i, d} = G_{s, d} . F_{i, s} :: /\_s +(∩) \/_s ANY(∪)
+# E02: keep unvisited candidates
+F_{i+1, d} = T_{i, d} . not P_{i, d} :: /\_d <-(∩)
+# E03: mark the new frontier visited
+P_{i+1, d} = P_{i, d} . F_{i+1, d} :: /\_d OR(∪)
+<> : ||F_{i+1}|| == 0

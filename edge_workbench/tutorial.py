@@ -1,46 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Read a tutorial's worked example, and turn it into an instance.
+"""Read what a tutorial's front matter states, and lay out its graph.
 
-WHY THIS EXISTS
----------------
-The instance the page ran used to be a file in this repository, written by
-hand, describing a graph that appeared nowhere else. The tutorial on the
-website described a *different* graph in its worked example. So the page
-showed a careful walkthrough of a problem the page's own prose never
-mentioned, and nothing connected the two.
+The author's words come from the front matter: the per-Einsum meanings under
+each formula in `edge_expression_walkthrough`, and the tensor notes in
+`problem_statement` (or a `tensor_notes` block). The worked example itself is
+prose; the tutorial-data model step states it as an instance, quoting the
+tutorial, and `check` verifies the quote.
 
-This closes that. The tutorial's worked example is the instance. A visualiser
-runs the example the page describes, and the answer the page publishes for it
-becomes something the build can check.
-
-THE CONTRACT
-------------
-A tutorial carries a `working_example_data` key in its front matter, holding
-JSON:
-
-    working_example_data: |
-      {
-        "vertices": 4, "source": 0, "sink": 3,
-        "capacities": [[0, 1, 3], [0, 2, 2], ...],
-        "expect": {"flow": 5, "generations": 4, "pushes": {...}}
-      }
-
-JSON inside a YAML block scalar, so Jekyll parses the front matter as usual
-and this module needs no YAML parser -- which matters, because a clean clone
-of this repository builds with `node` and Python and nothing installed.
-
-`expect` is the part that makes this more than convenience. It is the answer
-the page publishes, so checking a run against it checks the tool against the
-author rather than against itself.
-
-WHAT IS DERIVED, AND WHY
-------------------------
-Node positions are computed, not read. A tutorial states a graph; where to
-draw it is presentation, and asking an author for pixel coordinates would put
-a layout in every tutorial that wants a picture. Vertices are placed in
-columns by their distance from the source, which puts the source on the left,
-the sink on the right, and the flow left-to-right -- the reading most people
-already have for a flow network.
+Node positions are computed, not read: a tutorial states a graph, and where to
+draw it is presentation. `layer_positions` puts vertices in columns by their
+distance from the source, so the source sits on the left and the sink on the
+right.
 """
 
 from __future__ import annotations
@@ -49,10 +19,7 @@ import json
 import re
 from collections import deque
 from pathlib import Path
-from typing import Any
 
-KEY = "working_example_data"
-MEANINGS_KEY = "einsum_meanings"
 
 
 class TutorialError(RuntimeError):
@@ -83,42 +50,6 @@ def _block_scalar(text: str, key: str) -> str | None:
             break
         body.append(line[indent:])
     return "\n".join(body)
-
-
-def read_example(tutorial: Path) -> dict:
-    """The worked example a tutorial publishes, as data."""
-    text = Path(tutorial).read_text()
-    block = _block_scalar(text, KEY)
-    if block is None:
-        raise TutorialError(
-            f"{tutorial} has no `{KEY}:` block, so there is no worked example "
-            f"to run. Add one to the front matter:\n"
-            f"    {KEY}: |\n"
-            f'      {{"vertices": N, "source": s, "sink": t,\n'
-            f'       "capacities": [[u, v, cap], ...],\n'
-            f'       "expect": {{"flow": F}}}}'
-        )
-    try:
-        data = json.loads(block)
-    except json.JSONDecodeError as e:
-        raise TutorialError(
-            f"{tutorial}'s `{KEY}` block is not valid JSON: {e}"
-        ) from e
-
-    # Required fields depend on the SHAPE of the problem. A matrix example
-    # has no source or sink, and demanding them would force a tutorial to
-    # describe its problem as something it is not.
-    required = {
-        "graph": ("vertices", "source", "sink", "capacities"),
-        "matrix": ("matrix",),
-    }[data.get("kind", "graph")]
-    for field in required:
-        if field not in data:
-            raise TutorialError(
-                f"{tutorial}'s `{KEY}` is kind "
-                f"{data.get('kind', 'graph')!r} and is missing {field!r}"
-            )
-    return data
 
 
 # ------------------------------------------------------------- layout ---
@@ -163,85 +94,6 @@ def layer_positions(n: int, edges: list[tuple[int, int, int]], source: int,
                 55 + (height - 110) * k / (len(members) - 1)
             pos[str(v)] = [round(x), round(y)]
     return pos
-
-
-# ----------------------------------------------------------- instance ---
-
-def to_instance(example: dict, *, domain: dict | None = None) -> dict:
-    """The instance a driver can run, from the example a tutorial publishes.
-
-    Dispatches on the SHAPE of the problem, because different problems are
-    stated differently and forcing one shape on all of them would mean
-    tutorials describing a matrix as a list of edges.
-
-      graph   (default) vertices, a source, a sink, capacities
-      matrix            rows, columns and a boolean incidence matrix
-
-    A matrix is drawn as a BIPARTITE graph -- rows on one side, columns on
-    the other, an edge wherever the matrix has an entry -- which for exact
-    cover is not a reinterpretation but the standard formulation: rows are
-    sets, columns are elements, and a cover picks rows so every column has
-    degree one.
-    """
-    if example.get("kind") == "matrix":
-        return _matrix_instance(example, domain=domain)
-    n = int(example["vertices"])
-    source = int(example["source"])
-    sink = int(example["sink"])
-    edges = [(int(u), int(v), int(c)) for u, v, c in example["capacities"]]
-
-    cap = {f"{u},{v}": c for u, v, c in edges}
-    instance: dict[str, Any] = {
-        "extent": {"U": n, "V": n},
-        "scalars": {"VertexCount": n},
-        "tensors": {
-            # G is the adjacency the cascade never reads -- C carries the
-            # capacities -- but the IR declares it as an input, and an input
-            # present on one side only reads as a disagreement about the
-            # algorithm when it is a disagreement about setup.
-            "G": {k: 1 for k in cap},
-            "C": cap,
-            "S": {str(source): True},
-            "T": {str(sink): True},
-        },
-        "domain": {
-            "view": "graph",
-            "graph": {
-                "nodes": list(range(n)),
-                "edges": [{"u": u, "v": v, "cap": c} for u, v, c in edges],
-                "source": source,
-                "sink": sink,
-            },
-            "positions": layer_positions(n, edges, source, sink),
-        },
-    }
-    if domain:
-        instance["domain"].update(domain)
-    return instance
-
-
-def read_meanings(tutorial: Path) -> dict[str, str]:
-    """label -> what that Einsum means for the problem, from the tutorial.
-
-    The author's half of each explanation. The other half -- what the Einsum
-    does over its iteration space -- is generated from the IR by
-    `edge_workbench/render/action_prose.py`, because the program already says
-    it and restating it by hand is how a restatement drifts.
-
-    Returns {} when the tutorial has no such block, so a tutorial that has not
-    been migrated still builds a page; the coverage gate is what turns the
-    absence into a failure.
-    """
-    block = _block_scalar(Path(tutorial).read_text(), MEANINGS_KEY)
-    if block is None:
-        return {}
-    try:
-        data = json.loads(block)
-    except json.JSONDecodeError as e:
-        raise TutorialError(
-            f"{tutorial}'s `{MEANINGS_KEY}` block is not valid JSON: {e}"
-        ) from e
-    return {k: v for k, v in data.items() if not k.startswith("_")}
 
 
 WALKTHROUGH_KEY = "edge_expression_walkthrough"
@@ -389,54 +241,3 @@ def read_all_tensor_notes(tutorial: Path) -> dict[str, str]:
         notes.update({k: v for k, v in extra.items()
                       if not k.startswith("_")})
     return notes
-
-
-def _matrix_instance(example: dict, *, domain: dict | None = None) -> dict:
-    """A rows-by-columns instance, drawn as a bipartite graph.
-
-    Node ids are side-qualified (`R:0`, `C:0`) because row 0 and column 0 are
-    different nodes that share an index; the tensor itself is still keyed by
-    the bare pair, `"0,2"`, the way every rank-2 tensor is.
-    """
-    from edge_workbench import domain_shape
-
-    matrix = example["matrix"]
-    rows = int(example.get("rows", len(matrix)))
-    cols = int(example.get("columns", len(matrix[0]) if matrix else 0))
-    row_rank = example.get("rowRank", "R")
-    col_rank = example.get("colRank", "C")
-    tensor = example.get("tensor", "A")
-
-    cells = {
-        f"{r},{c}": True
-        for r, line in enumerate(matrix)
-        for c, v in enumerate(line)
-        if v
-    }
-    edges = [
-        {"u": domain_shape.qualify(row_rank, k.split(",")[0]),
-         "v": domain_shape.qualify(col_rank, k.split(",")[1])}
-        for k in cells
-    ]
-    nodes = ([domain_shape.qualify(row_rank, r) for r in range(rows)]
-             + [domain_shape.qualify(col_rank, c) for c in range(cols)])
-
-    instance: dict[str, Any] = {
-        "extent": {row_rank: rows, col_rank: cols},
-        "scalars": dict(example.get("scalars", {})),
-        "tensors": {tensor: cells},
-        "domain": {
-            "view": domain_shape.BIPARTITE,
-            "graph": {
-                "nodes": nodes,
-                "edges": edges,
-                "sides": {"left": row_rank, "right": col_rank},
-            },
-            "positions": domain_shape.bipartite_positions(
-                rows, cols, row_rank, col_rank),
-        },
-    }
-    if domain:
-        instance["domain"].update(domain)
-        instance["domain"]["view"] = domain_shape.BIPARTITE
-    return instance

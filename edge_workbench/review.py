@@ -113,20 +113,6 @@ def tensors_touched(program: dict, cascade: dict) -> dict[str, set[str]]:
     return out
 
 
-def _named(text: str, names: set[str]) -> set[str]:
-    """Which of these tensors the prose names, as whole words.
-
-    Only names of three characters or more. `D`, `E`, `F` and `R` match
-    ordinary prose constantly, and a signal that fires on every sentence is
-    not a signal.
-    """
-    low = text.lower()
-    return {
-        n for n in names
-        if len(n) >= 3 and re.search(rf"\b{re.escape(n.lower())}\b", low)
-    }
-
-
 # ----------------------------------------------------------------- checks --
 
 def check(artifact: dict, program: dict | None = None,
@@ -154,39 +140,9 @@ def _check_example(example: dict | None) -> list[Finding]:
         return [Finding("example", "absent, so nothing can be run or checked")]
 
     out: list[Finding] = []
-    kind = example.get("kind", "graph")
+    kind = example.get("kind", "instance")
 
-    if kind == "matrix":
-        matrix = example.get("matrix") or []
-        rows = example.get("rows", len(matrix))
-        cols = example.get("columns", len(matrix[0]) if matrix else 0)
-        if len(matrix) != rows:
-            out.append(Finding("example",
-                               f"declares {rows} rows but the matrix has "
-                               f"{len(matrix)}"))
-        bad = [i for i, line in enumerate(matrix) if len(line) != cols]
-        if bad:
-            out.append(Finding("example",
-                               f"rows {bad} are not {cols} columns wide"))
-
-        # Solutions can be checked against the matrix, with no run at all.
-        for rowset in (example.get("expect") or {}).get("solutions", []):
-            covered: list[int] = []
-            for r in rowset:
-                if r >= len(matrix):
-                    out.append(Finding("example",
-                                       f"solution names row {r}, which does "
-                                       f"not exist"))
-                    break
-                covered += [c for c, v in enumerate(matrix[r]) if v]
-            else:
-                if sorted(covered) != list(range(cols)):
-                    out.append(Finding(
-                        "example",
-                        f"rows {rowset} are published as a solution but cover "
-                        f"{sorted(covered)}, not every column exactly once"
-                    ))
-    elif kind == "instance":
+    if kind == "instance":
         # Stated in the program's own inputs. Whether they are the RIGHT
         # inputs needs the program, so `verifier.instance_problems` does
         # that; here only the shape.
@@ -198,10 +154,6 @@ def _check_example(example: dict | None) -> list[Finding]:
                 "example",
                 "no `expect.answer`: the tutorial's published answer is what "
                 "the run is checked against"))
-    elif kind == "graph":
-        for field in ("vertices", "source", "sink", "capacities"):
-            if field not in example:
-                out.append(Finding("example", f"missing {field!r}"))
     else:
         out.append(Finding("example", f"unknown kind {kind!r}"))
 

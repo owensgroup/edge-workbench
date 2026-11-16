@@ -5,6 +5,8 @@ gives each vertex's distance from the source.
 valid BFS tree gives the same depths, so depths are what is compared."""
 
 ANSWER_LABEL = "depths"
+KIND = "different-algorithm"
+METHOD = "Floyd-Warshall"
 
 INF = float("inf")
 

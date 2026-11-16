@@ -11,10 +11,11 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Sanjana Mali" }]
 
-# Deliberately empty. The renderer writes a self-contained HTML file and the
-# interpreter is plain JS, so nothing here needs numpy to draw a page. Oracles
-# are the exception and are optional extras: an algorithm that wants scipy
-# says so, and the absence of scipy disables that oracle rather than the tool.
+# Deliberately empty. The page is a self-contained HTML file that replays
+# edge-core-ir's evaluator trace (found via EDGE_IR_REPO or a sibling
+# checkout), so nothing here needs numpy to draw a page. A verifier of KIND
+# "library" may import networkx/scipy/numpy; without them installed it fails
+# with an "install X" message rather than disabling the tool.
 dependencies = []
 
 [project.optional-dependencies]

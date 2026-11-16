@@ -2,6 +2,8 @@
 problem (it also allows negative edges, as long as there is no negative cycle)."""
 
 ANSWER_LABEL = "distances"
+KIND = "different-algorithm"
+METHOD = "Floyd-Warshall"
 
 INF = float("inf")
 

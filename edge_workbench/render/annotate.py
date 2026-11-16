@@ -9,16 +9,14 @@ none of those are consequences of the spec. They are how the algorithm is
 
 Before this existed they came from a hand-written implementation of each
 algorithm, which is precisely what stopped any of this generalising. So they
-come from three places now, in order of how much they have to know:
+come from two places now:
 
-    meta.py       per-Einsum, static: LaTeX, what it means on the graph
+    meta.py       per-Einsum, static: what it means on the graph, from the
+                  author's meaning lines
     generic       per-step, derived: WHAT CHANGED, which is the highlight and
-                  a serviceable caption for any algorithm at all
-    view.py       per-step, optional: nicer phrasing for the few Einsums where
-                  "delta 1,2 = 4" is worse than "push 4 along 1 -> 2"
+                  a caption for any algorithm at all
 
-An algorithm that supplies no view module still gets a working page. That is
-the point: the generic path has to be good enough to stand alone, or the
+There is no per-algorithm code: the generic path has to stand alone, or the
 first tutorial someone uploads will not render.
 """
 
@@ -63,7 +61,6 @@ def generic_caption(tensor: str, changed: dict, limit: int = 6) -> str:
 
     Deliberately says the tensor and the cells rather than inventing a verb:
     "delta 1,2 = 4" is true of any algorithm, where "push 4" is true of one.
-    An algorithm that wants the verb supplies it in its view module.
     """
     if not changed:
         return ""
@@ -83,8 +80,7 @@ def _fmt(v: Any) -> str:
     return str(v)
 
 
-def annotate(trace: dict, meta: Any, view: Any = None,
-             latex: dict | None = None) -> dict:
+def annotate(trace: dict, meta: Any, latex: dict | None = None) -> dict:
     """Add caption, highlight and display metadata to every step, in place.
 
     `latex` is label -> formula, rendered from the IR by
@@ -105,19 +101,8 @@ def annotate(trace: dict, meta: Any, view: Any = None,
         step["graphMeaning"] = graph_meaning
         step["einsumMeaning"] = einsum_meaning
 
-        caption = None
-        highlight = None
-        if view is not None:
-            if hasattr(view, "caption"):
-                caption = view.caption(label, step, prev, changed)
-            if hasattr(view, "highlight"):
-                highlight = view.highlight(label, step, prev, changed)
-
-        step["caption"] = (
-            caption if caption is not None
-            else generic_caption(out, changed) if out else "")
-        step["graphHighlight"] = (
-            highlight if highlight is not None else generic_highlight(changed))
+        step["caption"] = generic_caption(out, changed) if out else ""
+        step["graphHighlight"] = generic_highlight(changed)
         # `expr` is what the page falls back to when MathJax has not loaded.
         step["expr"] = step["latex"] or label
         prev = step["state"]

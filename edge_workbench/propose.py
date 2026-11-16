@@ -47,41 +47,10 @@ RESPONSE_SHAPE = """\
   "tensorNotes": { "TensorName": "what it is for" }
 }"""
 
-# What `review._check_example` will hold a matrix example to. Stated in the
-# request because a model that has to guess the schema produces something
-# plausible that the gate then rejects -- and the rejection reads as the
-# model's failure rather than the request's.
-EXAMPLE_CONTRACT = """
-THE EXAMPLE
-
-Take it from a worked example the tutorial ALREADY GIVES. Do not invent an
-instance: the point of this field is that the answer can be checked against
-something the author published, and an invented matrix checks nothing.
-
-  "example": {
-    "kind": "matrix",
-    "rows": <int>, "columns": <int>,
-    "matrix": [[1,0,0], ...],        // rows x columns, 1 where the row covers
-    "expect": {
-      "solutions": [[...], [...]]    // every solution the tutorial states,
-                                     // as 0-based ROW indices
-    }
-  }
-
-These are checked before anything runs: the matrix must be exactly `rows` by
-`columns`, and every published solution must cover every column EXACTLY ONCE
-against that matrix. A solution that does not is either a transcription slip
-or the wrong example, and both are worth catching here rather than in a page.
-"""
-
-
 def instance_contract(program: dict, gen_rank: str = "I") -> str:
     """The example, stated in the PROGRAM's terms rather than the problem's.
 
-    A graph example and a matrix example used to be two hand-written shapes,
-    each translated into tensors by code that knew which algorithm it was
-    serving -- `to_instance` wrote max-flow's G, C, S and T by name. Asking
-    for the instance directly, keyed by the inputs the program actually reads,
+    Asking for the instance directly, keyed by the inputs the program actually reads,
     needs no translation and works for any algorithm: the program says what
     it needs, and `verifier.instance_problems` checks it got exactly that.
     """
@@ -171,7 +140,7 @@ def build_prompt(tutorial: Path, artifact: dict, program: dict | None = None,
     if any(g.startswith("example") for g in gaps):
         example_block = (instance_contract(
             program, (cascade or {}).get("generationalRank", "I"))
-            if program else EXAMPLE_CONTRACT)
+            if program else "")
     if want_view:
         example_block += VIEW_CONTRACT
 
@@ -280,62 +249,3 @@ def _remaining_gaps(artifact: dict) -> list[str]:
     if not prepare.explained(artifact):
         gaps.append("meanings: still absent")
     return gaps
-
-
-# ------------------------------------------------------------------- cli --
-
-def main(argv: list[str] | None = None) -> int:
-    import argparse
-
-    ap = argparse.ArgumentParser(
-        prog="edge_workbench.propose",
-        description="Build the model request, or apply its answer.",
-    )
-    ap.add_argument("tutorial", type=Path)
-    ap.add_argument("--spec", type=Path, required=True)
-    ap.add_argument("--emit-prompt", type=Path,
-                    help="write the request here instead of calling anything")
-    ap.add_argument("--apply", type=Path,
-                    help="a model's JSON answer, to merge into the artifact")
-    args = ap.parse_args(argv)
-
-    artifact = prepare.load(args.spec)
-    if not artifact:
-        print(f"no prepared artifact in {args.spec}; run "
-              f"`python3 -m edge_workbench.prepare` first")
-        return 1
-
-    program = cascade = None
-    programs = sorted(args.spec.glob("*_program.json"))
-    if programs and (args.spec / "cascade.json").exists():
-        program = json.loads(programs[0].read_text())
-        cascade = json.loads((args.spec / "cascade.json").read_text())
-
-    if args.apply:
-        response = json.loads(args.apply.read_text())
-        merged = apply(artifact, response, args.tutorial)
-        labels = sorted(cascade.get("labels") or {}) if cascade else None
-        findings = review.check(merged, program, cascade)
-        findings += review.check_quotes(merged, args.tutorial)
-        findings += review.check_citation_order(merged, args.tutorial, labels)
-        print(review.report(findings))
-        if findings:
-            print("\nNOT applied. Fix the answer and re-run.")
-            return 1
-        (args.spec / prepare.ARTIFACT).write_text(
-            json.dumps(merged, indent=1, ensure_ascii=False) + "\n")
-        print(f"applied to {args.spec / prepare.ARTIFACT}")
-        return 0
-
-    prompt = build_prompt(args.tutorial, artifact, program, cascade)
-    if args.emit_prompt:
-        args.emit_prompt.write_text(prompt)
-        print(f"wrote {args.emit_prompt} ({len(prompt)} chars, "
-              f"{len(artifact.get('gaps') or [])} gap(s))")
-    else:
-        print(prompt)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

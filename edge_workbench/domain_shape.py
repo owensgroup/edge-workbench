@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from edge_workbench import tensor_facts
+from edge_workbench import rank_kinds, tensor_facts
 
 GRAPH = "graph"
 BIPARTITE = "bipartite"
@@ -43,13 +43,19 @@ SEQUENCE = "sequence"
 
 
 def classify(program: dict, instance: dict | None = None,
-             gen_rank: str = "I") -> dict:
+             gen_rank: str = "I", kinds: dict | None = None) -> dict:
     """The view this program wants, and why.
 
     Returns `{"view", "sides", "reason"}`. `sides` names the rank on each side
     of a bipartite picture, left first, in declaration order; it is empty for
     the other views.
+
+    `kinds` is the tutorial's `ranks:` block (`rank_kinds.read`). When the
+    author declared it, it decides; the inference below is what runs without
+    one, and what `disagreement` compares a declaration against.
     """
+    if kinds:
+        return rank_kinds.view(kinds, gen_rank)
     sides_of = tensor_facts.rank_sides(program, gen_rank)
     ranks = tensor_facts.node_ranks(program, gen_rank)
     extents = tensor_facts.extents_of(instance or {})
@@ -102,6 +108,29 @@ def classify(program: dict, instance: dict | None = None,
     }
 
 
+def declared_vs_inferred(kinds: dict | None, program: dict,
+                         instance: dict | None = None,
+                         gen_rank: str = "I") -> str | None:
+    """A note when the `ranks:` block and the inference pick different views.
+
+    A NOTE, NOT A FAILURE. The inference cannot see meaning -- a DP table over
+    two string positions infers as a graph -- and that is the reason the
+    declaration exists, so a contradiction is not wrong by definition. It is,
+    though, where an agent author's slip would show, so `check` says it out
+    loud in the stage summary.
+    """
+    if not kinds:
+        return None
+    shape = classify(program, instance, gen_rank, kinds)
+    inferred = classify(program, instance, gen_rank)
+    same_sides = (not inferred["sides"] or not shape["sides"]
+                  or set(inferred["sides"]) == set(shape["sides"]))
+    if inferred["view"] == shape["view"] and same_sides:
+        return None
+    return (f"declared {shape['view']} ({shape['reason']}); the tensors alone "
+            f"would imply {inferred['view']} ({inferred['reason']})")
+
+
 def _shape_of(program: dict, rank: str) -> str | None:
     """The shape symbol a rank is declared with (`|V|`), if it is one."""
     for d in program.get("declarations", []):
@@ -135,7 +164,8 @@ def qualify(side: str, index: object) -> str:
 
 
 def disagreement(named: str | None, program: dict, instance: dict | None = None,
-                 gen_rank: str = "I", where: str = "the spec") -> list[str]:
+                 gen_rank: str = "I", where: str = "the spec",
+                 kinds: dict | None = None) -> list[str]:
     """Report a declared view that contradicts the one the program implies.
 
     `classify` is authoritative -- it reads where the rank-1 tensors live,
@@ -157,10 +187,8 @@ def disagreement(named: str | None, program: dict, instance: dict | None = None,
     to write a page whose every rank-1 marking would land on the wrong node
     set.
     """
-    if not named:
-        return []
-    shape = classify(program, instance, gen_rank)
-    if named == shape["view"]:
+    shape = classify(program, instance, gen_rank, kinds)
+    if not named or named == shape["view"]:
         return []
     return [
         f"{where} names the {named!r} view but the program implies "

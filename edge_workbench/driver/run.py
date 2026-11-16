@@ -38,7 +38,7 @@ class DriverError(RuntimeError):
 
 def run(algorithm: str | None = None, *, spec_dir: str | Path | None = None,
         program: str | None = None, instance: str | None = None,
-        selectors: dict | None = None, seed: int | None = None) -> dict:
+        seed: int | None = None) -> dict:
     """Execute the cascade and return {generations, steps, executed}.
 
     `executed` is the IR-node tally -- node key to run count -- which
@@ -49,8 +49,7 @@ def run(algorithm: str | None = None, *, spec_dir: str | Path | None = None,
 
     `seed` runs under the evaluator's `ShuffledSchedule(seed)`, which is how a
     free choice (`select-any`, `pick-admissible-edge`) is explored: the
-    evaluator decides those by visiting order. `selectors` is accepted for
-    older callers and only its seed is read.
+    evaluator decides those by visiting order.
     """
     from edge_workbench.spec_check import _import_edge_ir
 
@@ -66,9 +65,6 @@ def run(algorithm: str | None = None, *, spec_dir: str | Path | None = None,
     cascade = json.loads((spec / "cascade.json").read_text())
     inst = json.loads(Path(instance).read_text() if instance
                       else (spec / "instance.json").read_text())
-    if seed is None and selectors:
-        seeds = [r.get("seed") for r in selectors.values() if isinstance(r, dict)]
-        seed = next((s for s in seeds if s is not None), None)
 
     parsed = Program.model_validate(prog_json)
     shape_env, inputs = host_inputs(prog_json, inst)

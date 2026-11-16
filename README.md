@@ -10,9 +10,9 @@ records what that evaluator computed and the page renders it; nothing is
 evaluated a second time, in the browser or anywhere else.
 
 ```
-npm install          # jsdom, for the headless page checks
-npm test             # build, then check
-open build/max-flow/index.html
+npm install                                  # jsdom, for the headless page checks
+python3 -m edge_workbench check examples/maximum-flow   # writes examples/maximum-flow/index.html
+npm test                                     # domain views, every example page, pytest
 ```
 
 Python 3.10+ and an [`edge-core-ir`](https://github.com/edge-einsums/edge-core-ir)
@@ -50,37 +50,33 @@ the driver's per-IR-node tally rather than the emitted steps, because the two
 differ on purpose — initialization runs four Einsums and emits one step, and a
 lowered `cases` runs three and emits one.
 
-The answer check lives with the algorithm, in `algorithms/<alg>/verify/`,
-because only the algorithm knows what right means. The tool just runs it.
+The answer check is the author's `verifier.py`, because only the algorithm
+knows what right means; the tool runs it on the worked example, the published
+answer and 12 random instances. A person approves each verifier with
+`python3 -m edge_workbench approve-verifier <dir>` (AUTHORING.md), and `check`
+refuses one that has changed since.
 
-`npm run gates` additionally validates every spec against the IR itself —
-Layer 1, Layer 2, and that the committed program has not drifted from
-whatever generates it. It needs a checkout of
-[`edge-core-ir`](https://github.com/edge-einsums/edge-core-ir) and skips
-without one:
-
-```
-EDGE_IR_REPO=~/Projects/edge-core-ir npm run gates
-```
+`check` also validates the program against the IR (Layer 1 and Layer 2) and
+against einsum.edge. `npm run gates` runs the test suite; the tests that need
+an [`edge-core-ir`](https://github.com/edge-einsums/edge-core-ir) checkout or
+generated example files skip without them.
 
 ## Layout
 
 ```
 edge_workbench/        the tool. Contains no algorithm.
-  driver/    run.py: runs edge-core-ir's evaluator and records the trace
-  render/    build_page.py, annotate.py, display.js (glyphs only; no evaluation)
-  coverage.py
-  paths.py
-algorithms/max-flow/
-  spec/      IR program, instance, cascade structure, display metadata
-  verify/    its own answer check, run by the build
-  tests/     page checks
-tests/       generic gates
+  author.py    `check`: every stage, in order
+  driver/      run.py: runs edge-core-ir's evaluator and records the trace
+  render/      build_page.py, annotate.py, display.js (glyphs only; no evaluation)
+  verifier.py, approval.py    the verifier contract and its approval
+  rank_kinds.py, domain_shape.py    which picture a program gets
+examples/<alg>/        tutorial .md, einsum.edge, verifier.py (+ verifier.lock);
+                       `check` writes workbench/ and index.html beside them
+tests/                 generic gates
 ```
 
-Adding an algorithm is adding a directory. The tool reads the spec for the
-Einsum mapping, the instance for the picture and `meta.py` for the prose — it
-does not know what any of them compute.
+Adding an algorithm is adding a directory with those three files. The tool
+does not know what any algorithm computes.
 
 ## Free choices
 

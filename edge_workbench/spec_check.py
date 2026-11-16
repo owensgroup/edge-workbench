@@ -168,7 +168,7 @@ def single_assignment(program: dict, edge: Path, cascade: dict) -> list[str]:
 
     Upstream's pass reports two writes of the same slice. Some of those are
     the author's -- max-flow writes `F_{1,u,v}` in the cascade and `F_{i+1,u,v}`
-    every round, so `F` is reported, and that is how the algorithm is written.
+    every generation, so `F` is reported, and that is how the algorithm is written.
     Such findings used to be listed by hand, with reasons, in
     known_ir_violations.json -- a waiver file written by whoever wrote the
     builder, excusing that builder's own findings.
@@ -417,6 +417,3 @@ def label_map(surface: dict, program: dict, alias: dict) -> tuple[dict, list[str
         "writing the same tensor with the same output ranks."
     ]
 
-
-def load_json(path: Path) -> dict | None:
-    return json.loads(path.read_text()) if path.exists() else None

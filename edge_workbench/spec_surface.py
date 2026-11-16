@@ -39,6 +39,8 @@ three things above are the ones that went wrong in practice.
 
 from __future__ import annotations
 
+from edge_workbench.cascade_shape import flat_nodes, stopping_conditions  # noqa: F401
+
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -76,6 +78,9 @@ class SurfaceEinsum:
     output_ranks: tuple[str, ...] = ()
     named_ops: tuple[str, ...] = ()
     operands: tuple[str, ...] = field(default_factory=tuple)
+    depth: int = 1
+    """How many cascades it sits in: 1 in the outer cascade, 2 in an inner
+    one (`cascade_depths`)."""
 
 
 def _split_ranks(raw: str | None, bare: str | None) -> tuple[str, ...]:
@@ -119,14 +124,93 @@ def parse_edge_file(path: Path) -> dict[str, SurfaceEinsum]:
                 i += 1
                 continue
             # An indented line continues a `cases` block; a fresh
-            # left-aligned assignment starts a different Einsum.
-            if body and not line[:1].isspace() and "=" in stripped:
+            # left-aligned assignment starts a different Einsum, and so does
+            # a section line (`- Macro ...`) or a stopping condition.
+            if body and not line[:1].isspace() and (
+                    "=" in stripped or stripped.startswith(("- ", "<>"))):
                 break
-            body.append(stripped)
+            body.append(stripped.split("  #", 1)[0].rstrip())
             i += 1
         if body:
-            out[label] = _analyse(label, " ".join(body))
+            out[label] = _analyse(label, join_statement(body))
+    for label, depth in cascade_depths(path).items():
+        if label in out:
+            out[label].depth = depth
     return out
+
+
+# ------------------------------------------------------ case statements ---
+# A case statement is written
+#
+#     Z_{0, j, n} = cases:
+#         Z_{0, j-1, n}                  if n < j
+#         min(Z_{0, j-1, j}, A_{j+1})    if n = j
+#         empty                          otherwise
+#
+# one arm per indented line: an EDGE expression (with its own `:: ...` when it
+# needs one), then `if <condition>` or `otherwise`. `empty` as the expression
+# means the region gets no value. On one line the arms are separated by ` ; `,
+# which is the form every reader below works on.
+
+ARM_SEP = " ; "
+_CASES_HEAD = re.compile(r"=\s*cases\s*:?\s*")
+
+
+def join_statement(lines: list[str]) -> str:
+    """One statement's lines as one line; a `cases` block keeps its arms apart."""
+    if len(lines) > 1 and re.search(r"=\s*cases\s*:?\s*$", lines[0]):
+        return lines[0].rstrip() + " " + ARM_SEP.join(lines[1:])
+    return " ".join(lines)
+
+
+@dataclass(frozen=True)
+class SurfaceArm:
+    """One arm of a written case statement."""
+
+    expr: str            # the expression, with its `:: ...` if it has one
+    cond: str            # "" for `otherwise`
+
+    def key(self) -> tuple[str, str]:
+        """Whitespace-free, `==` and `=` alike, for comparing two spellings."""
+        def flat(text: str) -> str:
+            return re.sub(r"\s+", "", text).replace("==", "=")
+        return flat(self.expr), flat(self.cond)
+
+    @property
+    def is_empty(self) -> bool:
+        return self.expr.strip() == "empty"
+
+
+def split_arm(text: str) -> SurfaceArm:
+    text = text.strip()
+    m = re.match(r"^(.*?)\s+otherwise$", text)
+    if m:
+        return SurfaceArm(m.group(1).strip(), "")
+    # The LAST ` if `: an expression never contains one, a condition might
+    # not either, and the condition is what the line ends with.
+    head, sep, cond = text.rpartition(" if ")
+    if sep:
+        return SurfaceArm(head.strip(), cond.strip())
+    return SurfaceArm(text, "")
+
+
+def case_arms(text: str) -> list[SurfaceArm]:
+    """The arms of a one-line case statement; [] when `text` is not one."""
+    m = _CASES_HEAD.search(text)
+    if not m:
+        return []
+    rest = text[m.end():].strip()
+    return [split_arm(a) for a in rest.split(ARM_SEP) if a.strip()] if rest else []
+
+
+def is_cases(text: str) -> bool:
+    return bool(_CASES_HEAD.search(text))
+
+
+def strip_subscripts(text: str) -> str:
+    """`text` without its `_{...}` subscripts: `j-1` in a subscript is rank
+    arithmetic, not a hyphenated operator name."""
+    return re.sub(r"_\{[^{}]*\}", "_", text)
 
 
 def _analyse(label: str, text: str) -> SurfaceEinsum:
@@ -139,13 +223,13 @@ def _analyse(label: str, text: str) -> SurfaceEinsum:
     else:
         rhs = text
 
-    e.named_ops = tuple(sorted(set(NAMED_OP_RE.findall(rhs))))
+    e.named_ops = tuple(sorted(set(NAMED_OP_RE.findall(strip_subscripts(rhs)))))
 
     # Operand tensors: capitalised names on the right, minus the operator
     # words that happen to be capitalised.
     words = {"AND", "OR", "ANY", "NOT"}
     e.operands = tuple(
-        t for t in OPERAND_RE.findall(rhs) if t not in words
+        t for t in OPERAND_RE.findall(strip_subscripts(rhs)) if t not in words
     )
     return e
 
@@ -233,7 +317,7 @@ def derive_labels(surface: dict, program: dict,
     not corresponding to the specification.
     """
     alias = alias or {}
-    nodes = program["main_edge"]["cascade"]["einsums"]
+    nodes = flat_nodes(program)
     spec_writes = {e.output for e in surface.values()}
 
     def shown(node: dict) -> str:
@@ -274,7 +358,7 @@ def helper_tensors(surface: dict, program: dict, labels: dict,
                    alias: dict | None = None) -> set[str]:
     """Tensors written only by helper nodes: the lowering's, not the spec's."""
     alias = alias or {}
-    nodes = program["main_edge"]["cascade"]["einsums"]
+    nodes = flat_nodes(program)
     spec_writes = {e.output for e in surface.values()}
     out = set()
     for idx in labels.values():
@@ -349,3 +433,43 @@ def parse_specs(text: str) -> tuple[SurfaceSpec, ...]:
             merge=SURFACE_MERGE.get(merge, merge),
         ))
     return tuple(out)
+
+
+# ------------------------------------------------------ nested cascades ---
+
+def cascade_depths(path: Path) -> dict[str, int]:
+    """label -> how many cascades the Einsum sits in (1 = the outer one).
+
+    An inner cascade is the labelled Einsums between a `- Begin inner
+    cascade` line and the `<><> : ...` line that ends it; without the
+    `Begin` line, everything since the previous stopping condition. Each
+    further `<>` in the stopping condition is one more level.
+    """
+    out: dict[str, int] = {}
+    depth = 1
+    since: list[str] = []            # labels since the last boundary
+    opened = 0                       # explicit `Begin inner` lines still open
+    for raw in Path(path).read_text().splitlines():
+        line = raw.strip()
+        m = LABEL_RE.match(line)
+        if m:
+            out[m.group(1)] = depth
+            since.append(m.group(1))
+            continue
+        if line.startswith("- ") and "inner cascade" in line.lower():
+            depth += 1
+            opened += 1
+            since = []
+            continue
+        stop = re.match(r"^((?:<>)+)\s*:", line)
+        if stop:
+            level = stop.group(1).count("<>")
+            if level > 1:
+                if opened:
+                    opened -= 1
+                    depth -= 1
+                else:
+                    for label in since:      # no `Begin` line: retroactive
+                        out[label] = max(out[label], level)
+            since = []
+    return out

@@ -38,6 +38,8 @@ THE STAGES
 
 from __future__ import annotations
 
+from edge_workbench.cascade_shape import flat_nodes, stopping_conditions  # noqa: F401
+
 import json
 import os
 import re
@@ -407,7 +409,7 @@ def stage_program(a: Author) -> tuple[Stage, dict | None, dict | None]:
             "lists these problems for the model to fix.")
         s.next += _paste_instructions(prompt, a.replies / "builder.md", a)
         return s, None, None
-    n = len(program["main_edge"]["cascade"]["einsums"])
+    n = len(flat_nodes(program))
     s.summary = (f"{len(cascade['labels'])} Einsums -> {n} IR nodes; valid IR; "
                  f"operators and declarations match einsum.edge")
     unread = tensor_facts.unused(program)
@@ -522,7 +524,7 @@ def stage_tutorial_data(a: Author, program: dict, cascade: dict) -> tuple[Stage,
 
     # A blank Meaning on these two steps is easy to miss: ask for them.
     have = prepare.explained(artifact)
-    conds = program["main_edge"]["cascade"].get("stopping_conditions")
+    conds = stopping_conditions(program)
     untold = [k for k in labels if k not in have] + [
         k for k, needed in (("init", program.get("initialization", {})
                              .get("einsums")), ("stop", conds))

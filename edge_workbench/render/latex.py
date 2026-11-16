@@ -45,6 +45,9 @@ arms instead: what actually executes, in the order it executes.
 
 from __future__ import annotations
 
+from edge_workbench.cascade_shape import flat_nodes, stopping_conditions  # noqa: F401
+
+import re
 from typing import Any
 
 # ---------------------------------------------------------------- glyphs ---
@@ -151,6 +154,8 @@ class Renderer:
             self.ranks_of[d["name"]] = [r["name"] for r in d.get("ranks", [])]
             if not d.get("ranks") and d.get("value") is not None:
                 self.scalar[d["name"]] = d["value"]
+        self.literals = dict(self.scalar)
+        self.rank_names = {r for ranks in self.ranks_of.values() for r in ranks}
 
     # -- names ------------------------------------------------------------
     def name(self, t: str) -> str:
@@ -169,8 +174,11 @@ class Renderer:
         if kind == "arith":
             return f"{self.rank(r['lhs'])}{r['op']}{self.rank(r['rhs'])}"
         if kind == "shape_sym":
-            return (r"\lvert " + str(r.get("name", "?")).strip("|")
-                    + r"\rvert")
+            name = str(r.get("name", "?"))
+            if name in self.rank_names:
+                # A rank's own extent, written as the rank: `Z_{i-1, J-1, n}`.
+                return name
+            return r"\lvert " + name.strip("|") + r"\rvert"
         if kind == "rank_value":
             # EDGE's "rank variables as tensors": a coordinate read as a
             # value. The IR field is `expr`; `rank` and `value` are read too
@@ -395,7 +403,40 @@ class Renderer:
                 rf"(\text{{{_esc(coord)}}})")
 
     # -- a whole Einsum ----------------------------------------------------
-    def einsum(self, e: dict) -> str:
+    def condition(self, arm: dict) -> str:
+        """A case arm's condition: `n = j+1`, or `\\text{otherwise}`."""
+        from edge_workbench.cascade_shape import arm_condition
+
+        text = arm_condition(arm, self.literals)
+        if not text:
+            return r"\text{otherwise}"
+        for plain, tex in ((">=", r"\geq "), ("<=", r"\leq "), ("!=", r"\neq "),
+                           ("==", r"\equiv "), (" and ", r" \wedge "),
+                           (" or ", r" \vee "), (" not in ", r" \notin "),
+                           (" in ", r" \in ")):
+            text = text.replace(plain, tex)
+        text = re.sub(r"\b(True|False)\b", r"\\text{\1}", text)
+        return re.sub(r"\b([A-Z][A-Za-z0-9]+)(?=_|\b)",
+                      lambda m: self.name(m.group(1)), text)
+
+    def cases(self, e: dict, lhs: str) -> str:
+        """A case statement, as the paper sets one: an arm per row, each an
+        EDGE expression with its own actions, then its condition."""
+        rows = []
+        for arm in e["expression"].get("arms", []):
+            if arm.get("expression") is None:
+                body = r"\text{empty}"
+            else:
+                body = self.einsum({**e, "expression": arm["expression"],
+                                    "specs": arm.get("specs") or []},
+                                   rhs_only=True)
+            rows.append(f"{body} & {self.condition(arm)}")
+        pops = [s for s in e.get("specs", []) if s.get("kind") == "populate"]
+        tail = f" {self.populate(pops[0])}" if pops else ""
+        return (f"{lhs} = " + r"\begin{cases} " + r" \\ ".join(rows)
+                + r" \end{cases}" + tail)
+
+    def einsum(self, e: dict, rhs_only: bool = False) -> str:
         out = e["output_tensor"]
         ranks = e.get("output_ranks", [])
         pops = [s for s in e.get("specs", []) if s.get("kind") == "populate"]
@@ -413,6 +454,8 @@ class Renderer:
                 text += "^*"
             parts.append(text)
         lhs = self.name(out) + (_sub(",".join(parts)) if parts else "")
+        if (e.get("expression") or {}).get("kind") == "cases":
+            return self.cases(e, lhs)
 
         specs = e.get("specs", [])
         wrappers = self._wrapper_label(specs)
@@ -430,6 +473,8 @@ class Renderer:
             None)
         rhs = self.expression(e["expression"], multi, wrappers, gen_literal)
 
+        if rhs_only:
+            return f"{rhs}{self.specs(e.get('specs', []))}"
         if pops:
             return f"{lhs} = {rhs} {self.populate(pops[0])}"
         return f"{lhs} = {rhs}{self.specs(e.get('specs', []))}"
@@ -450,13 +495,15 @@ class Renderer:
         return r"\begin{array}{l} " + lines + r" \end{array}"
 
     # -- the stopping condition -------------------------------------------
-    def stopping(self, cond: dict) -> str:
+    def stopping(self, cond: dict, depth: int = 1) -> str:
+        """One diamond; an inner cascade's is written with `depth` of them."""
+        diamond = r"\diamond" * depth
         p = cond.get("predicate", {})
         if p.get("kind") != "comparison":
-            return r"\diamond"
+            return diamond
         lhs, rhs, op = p.get("lhs", {}), p.get("rhs", {}), p.get("op", "=")
         sym = r"\equiv" if op == "==" else op
-        return (rf"\diamond \,:\; {self._pred(lhs)} "
+        return (rf"{diamond} \,:\; {self._pred(lhs)} "
                 rf"{sym} {self._pred(rhs)}")
 
     def _pred(self, n: dict) -> str:
@@ -467,6 +514,8 @@ class Renderer:
             return rf"\lVert {self.name(o['tensor'])}_{{{sub}}} \rVert"
         if kind == "tensor_value":
             return self.projection(n["proj"])
+        if kind == "rank_value":
+            return self.rank(n["expr"])
         if kind == "property_app":
             return rf"\text{{{n.get('name', '?')}}}"
         return r"\text{?}"
@@ -483,7 +532,7 @@ def generations(program: dict, cascade: dict) -> dict:
     hole in the page produced by an invisible cause.
     """
     r = Renderer(program, cascade)
-    nodes = program["main_edge"]["cascade"]["einsums"]
+    nodes = flat_nodes(program)
     out: dict[str, str | None] = {}
     for label, idx in (cascade.get("labels") or {}).items():
         first = nodes[idx[0] if isinstance(idx, list) else idx]
@@ -501,7 +550,7 @@ def generations(program: dict, cascade: dict) -> dict:
 def render_all(program: dict, cascade: dict, alias: dict | None = None) -> dict:
     """label -> LaTeX, for every written Einsum plus init and stop."""
     r = Renderer(program, cascade, alias)
-    nodes = program["main_edge"]["cascade"]["einsums"]
+    nodes = flat_nodes(program)
     out: dict[str, str] = {}
 
     for label, idx in (cascade.get("labels") or {}).items():
@@ -512,7 +561,14 @@ def render_all(program: dict, cascade: dict, alias: dict | None = None) -> dict:
     if init:
         out[cascade.get("initLabel", "init")] = r.arms(init)
 
-    conds = program["main_edge"]["cascade"].get("stopping_conditions") or []
+    conds = stopping_conditions(program)
+    own = len(program["main_edge"]["cascade"].get("stopping_conditions") or [])
     if conds:
-        out[cascade.get("stopLabel", "stop")] = r.stopping(conds[0])
+        # An inner cascade's diamond is written first and doubled, as a
+        # nested cascade writes it; the outer cascade's comes last.
+        shown = ([r.stopping(c, 2) for c in conds[own:]]
+                 + [r.stopping(c) for c in conds[:own]])
+        out[cascade.get("stopLabel", "stop")] = (
+            shown[0] if len(shown) == 1 else
+            r"\begin{array}{l} " + r" \\ ".join(shown) + r" \end{array}")
     return out

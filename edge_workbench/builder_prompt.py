@@ -122,7 +122,7 @@ RULES -- each one is checked
 
 2. Each labelled Einsum (`# E01: ...`) lowers to ONE IR Einsum writing that
    Einsum's output tensor with the same output ranks, in label order (a
-   `cases` statement may lower to one node per arm). Never introduce a
+   `cases` statement is one Einsum too: rule 7). Never introduce a
    tensor the spec does not write. Where the IR needs steps, write them as
    labelled parenthesized parts of the same Einsum -- AnonymousTensor with
    BinaryApp labels, specs flat on the Einsum -- as max-flow's E06 and E11
@@ -149,7 +149,61 @@ RULES -- each one is checked
    spec writes a lower-case name (`delta`), capitalise it (`Delta`) and
    nothing else.
 
-6. Reply with each file in its own fenced block whose info string names it:
+6. Case statements, inner cascades, macros and conditional cascades have
+   IR of their own (local patches in this edge-core-ir checkout; none of the
+   worked translations below uses them, so follow this rule exactly).
+
+   CASES. `Z_{{...}} = cases:` followed by one arm per line,
+   `<expression> if <condition>` or `<expression> otherwise`, is ONE Einsum
+   whose `expression` is `Cases(arms=[CaseArm(...), ...])`, arms in the
+   order written (the first arm whose condition holds claims a point):
+     from edge_ir.ir.einsum import CaseArm, Cases
+     CaseArm(expression=<the arm's expression tree>,
+             specs=[<the arm's own Map/Reduce specs; labels start at 1 per arm>],
+             where=<condition on rank variables>, when=<condition on tensor values>)
+   - a condition on rank variables (`n = j+1`, `u != s`) is `where`: an
+     `edge_ir.ir.predicate.PredicateComparison(lhs, op, rhs)` over rank
+     expressions, joined with `LogicalAnd(operands=[...])` for `and`;
+   - a condition on a tensor's value (`TopDown_i == True`) is `when`: an
+     `edge_ir.ir.stopping.Comparison` of two `TensorProjectionValue`s (a
+     literal is a zero-rank `Lit_...` declaration carrying `value`);
+   - `otherwise` is an arm with neither; an arm written `empty` has
+     `expression=None` (its region gets no value);
+   - an arm written as a function call, `min(X_..., Y_...)`, is a Map:
+     `BinaryApp(label=1, lhs=X, rhs=Y)` with a MapSpec whose compute is the
+     function. The spec states no merge for it: use `intersect`, and say so
+     in a comment at that Einsum;
+   - the Einsum's own `specs` stay `[]` unless the statement has a populate.
+   A `cases:` in the Initializations section is an initialization Einsum
+   built the same way.
+
+   INNER CASCADES. The Einsums between `- Begin inner cascade` and the
+   `<><> : ...` line that ends it are ONE entry of the enclosing cascade's
+   `einsums` list: a `NestedCascade(einsums=[...], stopping_conditions=[the
+   <><> condition], iterative_rank=IterativeRankSpec(rank_variable=...))`.
+   Give the outer cascade its `iterative_rank` too. A stopping condition on
+   a rank variable (`j == J`) compares two `RankExpressionValue`s; a rank's
+   shape read as a coordinate (`J-1`) is
+   `RankArith(RankConstantShapeSym(name=<that rank's declared shape>) - 1)`.
+   Declare a rank with the shape the spec gives it (`I = N-1` has shape
+   "N-1"), the generational rank included when the spec gives it one.
+
+   MACROS AND CONDITIONAL CASCADES. A `- Macro NAME(inputs) -> outputs`
+   section is a template: build it once as
+   `edge_ir.ir.macro.MacroDefinition(name, inputs, outputs, body)`, its body
+   written exactly as the section writes it (formal names and all), and get
+   an invocation's Einsums from `edge_ir.ir.macro.expand(defn, actual_inputs,
+   actual_outputs)`. A multi-output statement
+     (Out1_{{...}}, Out2_{{...}}) = cases:
+         NAME-A(args...)   if <condition>
+         NAME-B(args...)   if <condition>
+   is ONE entry of the cascade's `einsums` list:
+   `ConditionalCascade(arms=[ConditionalArm(when=<condition>,
+   einsums=expand(...), macro="NAME-A"), ...])`, arms in the order written.
+   A formal parameter the macro body WRITES but its header does not list as
+   an output is still bound by the call (pass it in `inputs`).
+
+7. Reply with each file in its own fenced block whose info string names it:
 
 ```python file={names['builder']}
 ...

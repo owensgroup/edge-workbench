@@ -43,6 +43,8 @@ What can be checked, and is:
 
 from __future__ import annotations
 
+from edge_workbench.cascade_shape import flat_nodes, stopping_conditions  # noqa: F401
+
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -94,7 +96,7 @@ def tensors_touched(program: dict, cascade: dict) -> dict[str, set[str]]:
         d["name"] for d in program.get("declarations", [])
         if not d.get("ranks")
     }
-    nodes = program["main_edge"]["cascade"]["einsums"]
+    nodes = flat_nodes(program)
     out: dict[str, set[str]] = {}
     for label, idx in (cascade.get("labels") or {}).items():
         names: set[str] = set()

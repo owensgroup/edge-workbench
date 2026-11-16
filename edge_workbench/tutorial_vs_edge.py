@@ -49,9 +49,11 @@ _LATEX = [
     # table has just produced.
     (r"\,", " "), (r"\;", " "), (r"\ ", " "), (r"\!", ""), (r"\quad", " "),
     (r"\_", "_"), (r"\ast", "*"),
+    ("{-}", "-"), ("{+}", "+"),               # `N{-}1`: tight binary spacing
     (r"\textstyle", ""), (r"\displaystyle", ""),
     (r"\bigwedge", "/\\"), (r"\bigvee", "\\/"),
     (r"\cap", "∩"), (r"\cup", "∪"),
+    (r"\wedge", " and "), (r"\land", " and "),   # in a case condition
     (r"\leftarrow", "<-"), (r"\rightarrow", "->"), (r"\to", "->"),
     (r"\left", ""), (r"\right", ""),          # sizing, and before \le below
     (r"\equiv", "=="), (r"\neq", "!="), (r"\geq", ">="), (r"\leq", "<="),
@@ -131,8 +133,58 @@ def _clean_cases(lines: list[str]) -> str:
             + re.sub(r"\\\\(\[[^\]]*\])?\s*$", "", body.strip()))
 
 
-def read_tutorial(md: Path) -> Sides:
-    block = tut._block_scalar(Path(md).read_text(), "edge_expression")
+#: `- Cascade: Bottom-Up` in einsum.edge: which of the tutorial's cascades
+#: this file transcribes, when it is not the one in `edge_expression`.
+_CASCADE_LINE = re.compile(r"^-\s*Cascade\s*:\s*(.+?)\s*$",
+                           re.MULTILINE | re.IGNORECASE)
+_HEADING = re.compile(
+    r"\\triangleright\s*\\textbf\{Extended Einsums?\s*(?:—|--|-|:)\s*([^}]*)\}")
+
+
+def selected_cascade(edge: Path) -> str | None:
+    """The cascade einsum.edge says it transcribes, or None for the
+    tutorial's `edge_expression`.
+
+    A tutorial may give several cascades for one problem (DO-BFS: top-down in
+    `edge_expression`, bottom-up and hybrid under Variants). A page shows one
+    cascade, so an author directory is one cascade: einsum.edge names it with
+    a `- Cascade: <name>` line, where <name> is what follows `Extended Einsum
+    —` in that cascade's heading in the tutorial.
+    """
+    m = _CASCADE_LINE.search(Path(edge).read_text())
+    return m.group(1) if m else None
+
+
+def _name_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
+
+
+def _named_block(md: Path, name: str) -> str:
+    """The `$$ ... $$` block whose heading is `Extended Einsum — <name>`."""
+    text = Path(md).read_text()
+    blocks = [b for b in re.findall(r"\$\$(.*?)\$\$", text, re.DOTALL)
+              if r"\begin{aligned}" in b]
+    named = [(h.group(1).strip(), b) for b in blocks
+             for h in [_HEADING.search(b)] if h and h.group(1).strip()]
+    same = [b for n, b in named if _name_key(n) == _name_key(name)]
+    # A cascade given in full declares its tensors; a sketch that reuses
+    # another block's declarations is not one a page can be built from.
+    full = [b for b in same if re.search(r"\\textbf\{Tensors\}", b)]
+    if len(full) != 1:
+        known = sorted({n for n, b in named
+                        if re.search(r"\\textbf\{Tensors\}", b)})
+        raise tut.TutorialError(
+            f"einsum.edge says `- Cascade: {name}`, and {md.name} has "
+            f"{len(full)} cascade(s) headed `Extended Einsum — {name}` that "
+            f"declare their tensors. Cascades it gives in full: {known}.")
+    return "\n".join(line.strip() for line in full[0].splitlines())
+
+
+def read_tutorial(md: Path, which: str | None = None) -> Sides:
+    if which:
+        block = _named_block(Path(md), which)
+    else:
+        block = tut._block_scalar(Path(md).read_text(), "edge_expression")
     if block is None:
         raise tut.TutorialError(f"{md} has no `edge_expression:` block")
 
@@ -159,6 +211,10 @@ def read_tutorial(md: Path) -> Sides:
         if not line or line.startswith("$$") or line.startswith(r"\begin{aligned}") \
                 or line.startswith(r"\end{aligned}"):
             continue
+        if line.lstrip("& ").startswith(r"\diamond"):
+            # A stopping condition may carry a trailing remark:
+            # `\diamond\diamond : j \equiv J \qquad \triangleright end inner cascade`.
+            line = re.split(r"\\q?quad\s*\\triangleright|\\triangleright", line)[0]
         if r"\triangleright" in line:
             low = line.lower()
             section = ("tensors" if "tensors" in low else
@@ -167,7 +223,12 @@ def read_tutorial(md: Path) -> Sides:
         if pending or r"\begin{cases}" in line or line.rstrip().endswith("="):
             pending.append(line)
             if r"\end{cases}" in line:
-                cascade.append(Line(_cases(pending), latex=_clean_cases(pending)))
+                if section == "init":
+                    init.append(_cases(pending))
+                    init_tex.append(_clean_cases(pending))
+                else:
+                    cascade.append(Line(_cases(pending),
+                                        latex=_clean_cases(pending)))
                 pending = []
             continue
 
@@ -187,10 +248,13 @@ def read_tutorial(md: Path) -> Sides:
                                 for r in ranks.split(",")),
                     data_type=dtype.lower(), empty=empty)
         elif section == "init":
-            if "user-specified" in text:      # an input, not an assignment
-                continue
-            init.append(text)
-            init_tex.append(_clean_latex(line))
+            # A line may hold several statements, `A = x,\quad B = y`.
+            for piece in re.split(r",\s*\\q?quad\s*", _clean_latex(line)):
+                piece_text = latex_to_surface(piece)
+                if not piece_text or "user-specified" in piece_text:
+                    continue                  # an input, not an assignment
+                init.append(piece_text)
+                init_tex.append(piece)
         elif ss.HEAD_RE.match(text):
             # Only lines that write a tensor. A definition such as the stamp
             # function `\sigma(depth, r) = ...` is not part of the cascade,
@@ -202,9 +266,25 @@ def read_tutorial(md: Path) -> Sides:
 
 
 def _cases(lines: list[str]) -> str:
-    """A LaTeX `cases` block, as one line naming only its output."""
-    head = latex_to_surface(lines[0].split(r"\begin{cases}")[0])
-    return f"{head} cases"
+    """A LaTeX `cases` block in einsum.edge's one-line form:
+    `Z_{0, j, n} = cases: <expr> if <cond> ; ... ; <expr> otherwise`."""
+    text = "\n".join(lines)
+    head_tex, _, body = text.partition(r"\begin{cases}")
+    head = latex_to_surface(" ".join(head_tex.split()))
+    body = body.split(r"\end{cases}")[0]
+    arms = []
+    for row in re.split(r"\\\\(?:\[[^\]]*\])?", body):
+        if not row.strip():
+            continue
+        expr_tex, _, cond_tex = row.partition("&")
+        expr = latex_to_surface(" ".join(expr_tex.split()))
+        cond = latex_to_surface(" ".join(cond_tex.split()))
+        cond = re.sub(r"^if\b\s*", "", cond).strip()
+        if cond in ("o/w", "otherwise", ""):
+            arms.append(f"{expr} otherwise")
+        else:
+            arms.append(f"{expr} if {cond}")
+    return f"{head} cases: " + ss.ARM_SEP.join(arms)
 
 
 def read_edge(path: Path) -> Sides:
@@ -215,34 +295,45 @@ def read_edge(path: Path) -> Sides:
     init: list[str] = []
     stop: list[str] = []
     section = None
+    block: list[str] | None = None        # a `cases` block in the init section
     for raw in text.splitlines():
         line = raw.split("#", 1)[0].strip()
+        if block is not None:
+            if line and raw[:1].isspace():
+                block.append(line)
+                continue
+            init.append(ss.join_statement(block))
+            block = None
         if raw.strip().startswith("- "):
             low = raw.lower()
             section = ("init" if "initiali" in low else
-                       "cascade" if "einsum" in low else "tensors")
+                       "cascade" if "einsum" in low or "cascade" in low
+                       or "macro" in low else "tensors")
             continue
         if not line:
             continue
         if line.startswith("<>"):
             stop.append(line)
+        elif section == "init" and re.search(r"=\s*cases\s*:?\s*$", line):
+            block = [line]
         elif section == "init" and "=" in line:
             init.append(line)
+    if block is not None:
+        init.append(ss.join_statement(block))
 
-    cascade = []
-    for label in sorted(surface):
-        e = surface[label]
-        body = e.text
-        if "cases" in body:
-            body = body.split("cases")[0] + "cases"
-        cascade.append(Line(body, label))
+    cascade = [Line(surface[label].text, label) for label in sorted(surface)]
     return Sides(decls, init, cascade, stop)
 
 
 # ------------------------------------------------------------- compare ---
 
 def _flat(s: str) -> str:
-    return re.sub(r"\s+", "", s).replace("||", "|")
+    s = re.sub(r"\s+", "", s).replace("||", "|")
+    if ss.is_cases(s):
+        # Inside a case statement `=` and `==` are the same comparison, and
+        # the colon after `cases` is optional.
+        s = s.replace("==", "=").replace("cases:", "cases")
+    return s
 
 
 def _ops(line: Line) -> Counter:
@@ -309,6 +400,11 @@ def authored_meanings(md: Path, edge: Path) -> dict:
     this cascade is the one it explains, so an aside such as `$f(v,s) = -c$`
     between the two does not move it.
     """
+    if selected_cascade(edge):
+        # The walkthrough explains the `edge_expression` cascade. Another
+        # cascade's meanings are prose around it, which the tutorial-data
+        # step quotes; nothing is read from the walkthrough for it.
+        return {}
     t, e = read_tutorial(md), read_edge(edge)
     labelled = _labelled(t, e)
     out: dict = {}
@@ -338,7 +434,7 @@ def written_forms(md: Path, edge: Path) -> dict:
     wrote. The tutorial's LaTeX is, and `compare` has already held it to
     einsum.edge. Keys are E-numbers, plus `init`, `stop` and `definitions`.
     """
-    t, e = read_tutorial(md), read_edge(edge)
+    t, e = read_tutorial(md, selected_cascade(edge)), read_edge(edge)
     out: dict = {"definitions": t.definitions}
     for tl, label in _labelled(t, e):
         if tl.latex:
@@ -356,7 +452,7 @@ def written_forms(md: Path, edge: Path) -> dict:
 
 def compare(md: Path, edge: Path) -> list[str]:
     """Every way the tutorial and einsum.edge disagree. Empty means agree."""
-    t, e = read_tutorial(md), read_edge(edge)
+    t, e = read_tutorial(md, selected_cascade(edge)), read_edge(edge)
     out: list[str] = []
 
     for name, td in sorted(t.declarations.items()):
@@ -421,10 +517,40 @@ def _operands(text: str) -> Counter:
     return Counter(m.lower() for m in re.findall(r"\b([A-Za-z][A-Za-z0-9]*)_", rhs))
 
 
+def _compare_cases(t: Line, e: Line, where: str) -> list[str]:
+    """Two case statements, arm by arm: expression and condition."""
+    ta, ea = ss.case_arms(t.text), ss.case_arms(e.text)
+    if [a.key() for a in ta] == [a.key() for a in ea]:
+        return []
+    out = []
+    if len(ta) != len(ea):
+        out.append(f"{where}: the tutorial's case statement has {len(ta)} "
+                   f"arm(s), einsum.edge's has {len(ea)}")
+    for k, (x, y) in enumerate(zip(ta, ea), 1):
+        if x.key() != y.key():
+            def show(a):
+                return f"`{a.expr}` " + (f"if {a.cond}" if a.cond else "otherwise")
+            out.append(f"{where}: arm {k} differs -- tutorial {show(x)}, "
+                       f"einsum.edge {show(y)}")
+    return out
+
+
 def _compare_line(t: Line, e: Line) -> list[str]:
     out = []
     te, ee = t.einsum, e.einsum
     where = e.name()
+    if ss.is_cases(t.text) or ss.is_cases(e.text):
+        if te.output != ee.output:
+            out.append(f"{where}: tutorial names the output {te.output}")
+        if [r.replace(" ", "").replace("*", "") for r in te.output_ranks] != \
+                [r.replace(" ", "").replace("*", "") for r in ee.output_ranks]:
+            out.append(f"{where}: tutorial writes ranks "
+                       f"{list(te.output_ranks)}, einsum.edge "
+                       f"{list(ee.output_ranks)}")
+        if ss.is_cases(t.text) != ss.is_cases(e.text):
+            out.append(f"{where}: one side writes a case statement and the "
+                       f"other does not")
+        return out + _compare_cases(t, e, where)
     if te.output != ee.output:
         out.append(f"{where}: tutorial names the output {te.output}")
     if [r.replace(" ", "").replace("*", "") for r in te.output_ranks] != \

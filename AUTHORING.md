@@ -123,9 +123,38 @@ Rules the checks rely on:
   name is a free choice and is run with random seeds.
 - **More than two operands** need parentheses and labels:
   `(A_r .^1 B_r)_r .^2 C_r :: /\^1 ... /\^2 ...`.
+- **A case statement** is one Einsum: `= cases:`, then one indented arm per
+  line, an expression followed by `if <condition>` or `otherwise`. An arm may
+  have its own `:: ...`; `empty` means its region gets no value. Arms are
+  tried in the order written, and the first whose condition holds is used.
+
+  ```
+  # E01: pass 0, step j
+  Z_{0, j, n} = cases:
+      Z_{0, j-1, n}                  if n < j
+      min(Z_{0, j-1, j}, A_{j+1})    if n = j
+      max(Z_{0, j-1, j}, A_{j+1})    if n = j+1
+      empty                          otherwise
+  ```
+
+  An arm written as a function call (`min(x, y)`) states no merge operator;
+  it is run with intersect, so a missing operand means no value. Write
+  `x . y :: /\ min(∪)` if you mean something else. A case statement may also
+  be an initialization.
+- **An inner cascade** is the Einsums between a `- Begin inner cascade` line
+  and the stopping condition that ends it, written with two diamonds:
+  `<><> : j == J`. The outer cascade's `<> : ...` comes last. A generational
+  rank you give a shape (`I = N-1`) also ends its cascade when it runs out.
+- **A tutorial with several cascades** gets one directory per cascade, each
+  with its own `einsum.edge` and page. `einsum.edge` transcribes
+  `edge_expression` unless it says otherwise with a line such as
+  `- Cascade: Bottom-Up`, the name after `Extended Einsum —` in that
+  cascade's heading in the tutorial. That cascade must declare its own
+  tensors, and its meanings come from the tutorial-data step.
 - It must say **what the tutorial says**. The workbench compares the two line
   by line — declarations, initialization, each Einsum's output, operands and
-  operators, and the stopping condition — and stops if they differ.
+  operators, each arm of a case statement, and the stopping conditions — and
+  stops if they differ.
 
 Complete, passing examples are in [`examples/`](examples/); more `einsum.edge` files are in `edge-core-ir/examples/algorithms/`.
 
@@ -299,7 +328,7 @@ index.html written: index.html
 | builder / program | the model's builder does not match `einsum.edge`; paste the rewritten prompt |
 | tutorial data | a meaning or the example does not quote your tutorial, or the example's inputs are wrong |
 | instance | the worked example, or a random instance, does not supply what the program reads; or the published answer is not the approved one |
-| page — coverage | an Einsum never executed |
+| page — coverage | an Einsum never executed; or an arm of a case statement (or of a conditional cascade) is reached by neither the worked example nor any random instance. An arm only the random instances reach is named on the line and noted on the page. |
 | page — answer check | **your cascade gives a different answer from your verifier** — on your worked example, on the answer your tutorial publishes, or on a random instance. The line reads `random instances: k/12 agree`; rerun a failing one alone with `verify-instance`. |
 
 The answer check is the one that finds mistakes in a specification. Exact
@@ -332,3 +361,8 @@ evaluator during `check`; the page only displays that run.
 ## Not supported yet
 
 - tensors with more than two non-generational ranks in the picture
+- macros in `einsum.edge` (`MACRO NAME(...)` sections and a case statement
+  choosing between them, as in DO-BFS hybrid); the evaluator can run them
+- for an inner cascade the page shows every Einsum at every generation of
+  both cascades, exactly as written: a range given only in a remark
+  (`▷ Pass 0, step j (j ≥ 1)`) is not a restriction

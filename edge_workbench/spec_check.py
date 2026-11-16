@@ -17,6 +17,8 @@ disagreement is reported as the IR being wrong.
 
 from __future__ import annotations
 
+from edge_workbench.cascade_shape import flat_nodes, stopping_conditions  # noqa: F401
+
 import importlib.util
 import json
 import os
@@ -295,8 +297,10 @@ def _udf_names(node: Any) -> set[str]:
 
 
 def _ir_specs(node: dict) -> list[tuple[str, str, str]]:
+    from edge_workbench.cascade_shape import all_specs
+
     out = []
-    for spec in node.get("specs", []):
+    for spec in all_specs(node):
         if spec.get("kind") not in ("map", "reduce"):
             continue
         compute = spec.get("compute_op") or {}
@@ -304,6 +308,106 @@ def _ir_specs(node: dict) -> list[tuple[str, str, str]]:
         name = compute.get("symbol") or compute.get("name") or "?"
         out.append((spec["kind"], COMPUTE_ALIASES.get(name, name),
                     merge.get("symbol") or merge.get("name") or "?"))
+    return out
+
+
+def _same_condition(written: str, lowered: str) -> bool:
+    def flat(text: str) -> str:
+        text = text.replace("==", "=").replace("|", "")
+        return "".join(text.split())
+    return flat(written) == flat(lowered)
+
+
+def _cases_versus_ir(surface: dict, program: dict, labels: dict) -> list[str]:
+    """A written case statement against the `Cases` it lowered to: the same
+    arms in the same order, each with the condition and the operators the
+    specification writes.
+
+    A statement lowered the older way, one IR Einsum per arm, has no
+    conditions in the IR to compare and is left to the other checks.
+    """
+    from edge_workbench import cascade_shape as shape
+    from edge_workbench import spec_surface as ss
+
+    out: list[str] = []
+    nodes = flat_nodes(program)
+    literals = shape.literal_values(program)
+    for label, e in sorted(surface.items()):
+        if label not in labels or not ss.is_cases(e.text):
+            continue
+        idx = labels[label]
+        if isinstance(idx, list):
+            continue
+        node = nodes[idx]
+        written = ss.case_arms(e.text)
+        if not written:
+            continue                       # a multi-output statement
+        if not shape.is_cases(node):
+            out.append(f"{label}: einsum.edge writes a case statement; the "
+                       f"IR Einsum is not a `Cases`. Lower it as ONE Einsum "
+                       f"whose expression is Cases(arms=[...]).")
+            continue
+        lowered = shape.arms(node)
+        if len(lowered) != len(written):
+            out.append(f"{label}: einsum.edge writes {len(written)} arm(s), "
+                       f"the IR has {len(lowered)}")
+            continue
+        for k, (w, arm) in enumerate(zip(written, lowered), 1):
+            where = f"{label} arm {k} (`{w.expr}`)"
+            if w.is_empty != (arm.get("expression") is None):
+                out.append(f"{where}: the spec writes "
+                           f"{'`empty`' if w.is_empty else 'an expression'}, "
+                           f"the IR has "
+                           f"{'none' if arm.get('expression') is None else 'an expression'}"
+                           f". An `empty` arm is expression=None.")
+            got = shape.arm_condition(arm, literals)
+            if not _same_condition(w.cond, got):
+                out.append(f"{where}: spec condition "
+                           f"`{w.cond or 'otherwise'}`, IR condition "
+                           f"`{got or 'otherwise'}`. The condition decides "
+                           f"which points the arm writes.")
+            have = [(sp.get("kind"),
+                     COMPUTE_ALIASES.get(n := ((sp.get("compute_op") or {}).get("symbol")
+                                               or (sp.get("compute_op") or {}).get("name")
+                                               or "?"), n),
+                     (sp.get("merge_op") or {}).get("symbol") or "?")
+                    for sp in arm.get("specs") or []]
+            for want in parse_specs(w.expr):
+                if (want.action, want.compute, want.merge) not in have:
+                    out.append(f"{where}: spec writes {want.compute}"
+                               f"({want.merge}) as a {want.action}; the arm "
+                               f"has {have}")
+            call = __import__("re").match(r"^\s*([a-z][A-Za-z0-9]*)\s*\(", w.expr)
+            if call and "::" not in w.expr and call.group(1) not in ("floor", "not"):
+                if not any(kind == "map" and name == call.group(1)
+                           for kind, name, _ in have):
+                    out.append(f"{where}: spec applies `{call.group(1)}`; the "
+                               f"arm's Map specs are {have}")
+    return out
+
+
+def _nesting_versus_ir(surface: dict, program: dict, labels: dict) -> list[str]:
+    """Each Einsum sits in as many cascades in the IR as in einsum.edge."""
+    from edge_workbench import cascade_shape as shape
+
+    placed = shape.placement(program)
+    out = []
+    for label, e in sorted(surface.items()):
+        depth = e.depth
+        if label not in labels:
+            continue
+        idx = labels[label]
+        first = idx[0] if isinstance(idx, list) else idx
+        got = len(placed[first]["ranks"]) if first < len(placed) else 0
+        # A cascade that is not iterative has no rank; it still counts as one.
+        got = max(got, 1)
+        if got != depth:
+            out.append(
+                f"{label}: einsum.edge puts it in "
+                f"{'an inner cascade' if depth > 1 else 'the outer cascade'} "
+                f"(depth {depth}); the IR has it at depth {got}. An inner "
+                f"cascade is one NestedCascade entry of the enclosing "
+                f"cascade, with its own stopping condition.")
     return out
 
 
@@ -323,7 +427,7 @@ def spec_versus_ir(surface: dict[str, SurfaceEinsum],
     out: list[str] = []
     alias = cascade.get("displayNames", {})
     labels = cascade.get("labels", {})
-    nodes = program["main_edge"]["cascade"]["einsums"]
+    nodes = flat_nodes(program)
 
     def nodes_for(label):
         idx = labels[label]
@@ -381,6 +485,9 @@ def spec_versus_ir(surface: dict[str, SurfaceEinsum],
                 out.append(
                     f"{where}: spec writes {want.compute}({want.merge}) as a "
                     f"{want.action}; IR has {lowered_specs}. {why}")
+
+    out += _cases_versus_ir(surface, program, labels)
+    out += _nesting_versus_ir(surface, program, labels)
 
     helpers = helper_tensors(surface, program, labels, alias)
     for decl in program.get("declarations", []):

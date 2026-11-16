@@ -19,20 +19,56 @@ Python 3.10+ and an [`edge-core-ir`](https://github.com/edge-einsums/edge-core-i
 checkout beside this one (or `EDGE_IR_REPO` pointing at it). `node` is needed
 only for the headless page checks.
 
-## Checking your own tutorial
+## The workflow
 
-Write three files in one directory -- the tutorial `.md`, its cascade as
-`einsum.edge`, and a `verifier.py` -- then run
+An algorithm becomes a published page in six steps. Each step names who does
+it; only the parts marked **you** need a person.
 
-```
-python3 -m edge_workbench check path/to/that/directory
-```
+1. **Draft** (agent, with you). In Claude Code in this repository, ask for an
+   EDGE tutorial and give one of: an algorithm's name, pseudocode, a program,
+   or an existing tutorial (e.g. `edge-algorithms/_algorithms/<name>.md`).
+   The `write-edge-tutorial` skill (`.claude/skills/write-edge-tutorial/`)
+   writes the tutorial `.md` (with its `ranks:` block and meaning lines) and
+   `einsum.edge` into `examples/<slug>/`, asking whenever something is
+   unclear. **You** approve at two checkpoints: (A) the pseudocode, worked
+   example and its expected answer; (B) the cascade.
+2. **Verifier** (**you** choose). The skill offers the verifier kinds
+   (`definition`, `library`, `certificate`, `different-algorithm`,
+   `user-reference`); you pick one. It drafts `verifier.py` only for a
+   library check or a wrapper around your own code, or if you ask it to.
+3. **Approve** (**you**, checkpoint C), in your own terminal:
+   ```
+   python3 -m edge_workbench approve-verifier examples/<slug>
+   ```
+   This pins `verifier.py` and, once it is known, the tutorial's published
+   answer in `verifier.lock`. Commit both. No agent can approve.
+4. **Check** (agent):
+   ```
+   python3 -m edge_workbench check examples/<slug>
+   ```
+   Every stage lists all its problems, then stops. The builder and
+   tutorial-data steps write a prompt; the agent answers it in the same
+   session (or you paste it into a chat) and the reply is checked like
+   anything else. A new tutorial's first published answer needs one more
+   `approve-verifier`. Anything about the cascade, the example or the answer
+   comes back to you with evidence. When every stage passes, `index.html` is
+   written beside your files.
+5. **Look**: open `examples/<slug>/index.html`.
+6. **Publish** (agent or you):
+   ```
+   python3 -m edge_workbench publish examples/<slug>
+   ```
+   Runs `check` again and refuses unless it passes, copies the page to
+   `edge-algorithms/assets/viz/<slug>/` (or `--site <dir>`), and adds the
+   `viz:` link to the site's tutorial. `--with-tutorial` also replaces the
+   site's tutorial with this one. Nothing is committed.
 
-as many times as it takes. Each run lists every problem it found and what to
-do next; two steps ask you to paste a prompt into a chat and save the reply.
-When everything passes, `index.html` is written beside your files.
+Without an agent: write the three files yourself (tutorial `.md`,
+`einsum.edge`, `verifier.py`) and run steps 3-6, pasting the two prompts
+into a chat. **[AUTHORING.md](AUTHORING.md) is the step-by-step guide.**
 
-**[AUTHORING.md](AUTHORING.md) is the step-by-step guide.**
+Other commands: `python3 -m edge_workbench verify-instance <dir> <k>` reruns
+one random instance of the answer check.
 
 ## Gates
 

@@ -2,8 +2,8 @@
 
 Gaps found while building walkthrough pages with edge-workbench. edge-core-ir's
 evaluator is the source of truth for EDGE semantics, so each is written up for
-Toluwa to decide. Issues 1, 2 and 7 are patched locally for now, so that other
-tutorials are not held up; see "Local changes" below. Each section is meant to
+Toluwa to decide. Issues 1, 2, 7, 8, 9 and 10 are patched locally for now, so
+that other tutorials are not held up; see "Local changes" below. Each section is meant to
 be pasted as one GitHub issue.
 
 ---
@@ -183,9 +183,215 @@ Fixed locally for now (see the end of this file).
 
 ---
 
+## 8. Case statements (paper §5.9.1, Eq. 61; §7.3.8, Eq. 155)
+
+**Where it came up:** bubble sort, every Einsum:
+
+```
+Z_{0,j,n} = { Z_{0,j-1,n}                 n < j
+            { min(Z_{0,j-1,j}, A_{j+1})   n = j
+            { max(Z_{0,j-1,j}, A_{j+1})   n = j+1
+            { empty                       o/w
+```
+
+and max-flow E04, whose builder lowers its three arms to three Einsums
+writing one slice of `R`, relying on later-overwrites-earlier (docs/TODO.md,
+"single assignment").
+
+**Problem.** The IR has no case statement (docs/TODO.md, "Language
+features"; docs/cases.md asks whether `CaseExpression` should be a node). A
+lowering to one Einsum per arm writes the output several times, and the
+conditions are lost: nothing downstream can show or check them.
+
+**What the paper says.** "EDGE supports the assignment of different
+expressions in different regions of the iteration space, using case
+statements ... Each branch of a case statement is itself a valid EDGE
+expression, with its own modifier if needed. At each point in the iteration
+space, [it] selects the appropriate sub-Einsum expression." §7.3.8: it "is
+syntactic sugar": each branch is an Einsum into a temporary restricted to its
+region, combined with `<<`; "EDGE allows any Boolean predicate as conditions
+for each case."
+
+**Local patch (the "middle path" of docs/cases.md).** `Einsum.expression` may
+be `Cases(arms=[CaseArm(expression, specs, where, when)])`. An arm carries its
+own expression and its own Map/Reduce specs; `where` is an `IterationPredicate`
+over rank variables (cases.md Pattern 1), `when` a stopping-style `Predicate`
+over tensor values (Pattern 2), both together their conjunction (Pattern 3),
+neither `otherwise`; `expression=None` is an arm written `empty`. The evaluator
+Maps and Reduces each arm as its own Einsum over the points it claims and
+combines the arms' reduction temporaries before the Einsum's one Populate, so
+the output is written once. `Cases` is not in the `Expression` union: it is
+only the whole right-hand side.
+
+**Questions.**
+
+1. Order. cases.md Pattern 4 asks for an overlay-order convention. The patch
+   says: arms are tested in written order and a point belongs to the first
+   whose condition holds, so `otherwise` is what no earlier arm claimed. The
+   paper's `T1 << T2` desugaring gives the same result for Eq. 61. Is
+   first-match the intended rule?
+2. Is a node in the IR right, or should the parser desugar (cases.md "Open
+   items")? Desugaring needs temporaries the author did not write.
+3. An arm written as a function call, `min(x, y)`, states no merge operator.
+   The paper's default for an omitted merge is pass-through. Bubble sort only
+   works with intersect: with pass-through, `max(Z_{0,j-1,j}, A_{j+1})` at
+   `j = 0` reads the empty `Z_{0,-1,0}` and writes `A_1` where the
+   initialization wrote `max(A_0, A_1)`. The bubble-sort builder uses
+   intersect and says so. What should the shorthand mean?
+4. A condition may only mention the output's rank variables and the pinned
+   iterative ranks; anything else raises. Is that the intended restriction?
+
+**Blocks:** the bubble-sort walkthrough. Fixed locally for now (see the end
+of this file).
+
+---
+
+## 9. Macros and conditional cascades (paper appendix B.8)
+
+**Where it came up:** direction-optimizing BFS, hybrid:
+
+```
+(Tree_{i+1,s,d}, F_{i+1,d}, TopDown_{i+1}) =
+    { TOP-DOWN(G_{s,d}, F_{i,s}, Tree_{i,s,d}, NV_{i,c}, MF_i, MU_i)   if TopDown_i ≡ True
+    { BOTTOM-UP(G_{s,d}, F_{i,s}, Tree_{i,s,d}, NV_{i,c}, NF_i)        if TopDown_i ≡ False
+
+▷ MACRO TOP-DOWN(TG_{s,d}, TF_{i,s}, ...) ↦ TTree_{i+1,s,d}, TF_{i+1,d}, TTopDown_{i+1}
+    (a cascade of Einsums over the formal names)
+```
+
+**Problem.** The IR and the evaluator have neither (docs/TODO.md: "Still
+open: ... case statements, macros/rank groups"). The statement above is a case
+statement whose arms are cascade-form macro invocations: per generation, one
+of two Einsum sequences runs.
+
+**What the paper says.** "A macro is a named, parameterized Einsum template.
+Invoking a macro expands it into one or more Einsums via lexical substitution
+of its tensor and rank variable expression parameters." Assignment form and
+cascade form "produce identical expansions"; "Since the arguments are rank
+variable expressions (not just variables), substitutions such as a ↦ m+1 are
+permitted"; "the caller is responsible for providing consistent subscripts".
+The paper has no term for a case statement over cascades; the tutorial calls
+it "a macro and a conditional cascade".
+
+**Local patch.**
+
+- Macros stay out of the evaluated IR, because they are lexical:
+  `edge_ir/ir/macro.py` has `MacroDefinition(name, inputs, outputs, body)` and
+  `expand(defn, inputs, outputs) -> list[Einsum]`, the substitution a lowering
+  calls. A formal subscript written as a shift (`TF_{i+1,d}`) binds its
+  variable through the shift; inconsistent subscripts raise. The inline form
+  (a macro as an anonymous tensor) is not implemented. `Program` does not keep
+  the definitions, since a new field would change every serialized program.
+- A cascade entry may be `ConditionalCascade(arms=[ConditionalArm(when,
+  einsums, macro)])`. The arms' conditions are read once, with the iterative
+  rank bound to the current generation, before any arm runs; the first arm
+  whose condition holds runs, and none if none holds. `macro` names where the
+  arm's Einsums came from and has no effect on evaluation.
+- `edge_ir.ir.einsum.flatten` numbers the Einsums depth first, and the
+  single-assignment pass does not count two arms of one conditional cascade as
+  two writes.
+
+**Questions.**
+
+1. Should the IR keep macro definitions and invocations (for tools, for
+   rewrites), or is expansion at lowering right?
+2. Is a conditional cascade one construct, or should the multi-output case
+   statement desugar to one case statement per output (which evaluates each
+   macro body once per output)?
+3. `TTopDown_{i+1}` is declared an output of both macros but
+   `TMF_i`/`TMU_i`/`TNF_i`, which the bodies also write, are listed as inputs.
+   Is "inputs" meant to include tensors the macro writes?
+
+**Blocks:** the DO-BFS hybrid walkthrough. Fixed locally for now in
+edge-core-ir (see the end of this file). The walkthrough itself still cannot
+be built: see "For the DO-BFS tutorial" below.
+
+---
+
+## 10. Inner cascades, and when a cascade ends (paper §7.3.1, Eq. 142; B.3)
+
+**Where it came up:** bubble sort:
+
+```
+▷ Begin outer cascade (passes)   i = 0
+  ▷ Begin inner cascade (steps)
+  Z_{0,j,n} = ...      Z_{i,0,n} = ...      Z_{i,j,n} = ...
+  ⋄⋄ : j ≡ J
+⋄ : Z_{i+1,J-1} ≡ Z_{i,J-1}
+```
+
+**Problem.** `NestedCascade` is flat, and the evaluator refuses a second
+iterative rank ("That is a nested cascade, and NestedCascade is flat").
+Running bubble sort also needed two readings the evaluator did not have.
+
+**Local patch.**
+
+- An entry of `NestedCascade.einsums` may itself be a `NestedCascade`, with
+  its own stopping conditions and `iterative_rank`. It runs to its own end
+  once per generation of the cascade around it, with the outer ranks bound.
+- **The rank bounds the cascade.** Eq. 142: `RV_i = { i | i ∈ [0, I) ∧ ¬⋄(i) }`.
+  When the tensor rank an iterative variable subscripts has a declared shape,
+  a generation outside it does not run and the cascade ends
+  (`stopped_by = "rank-exhausted"`). With `J ≡ N−1`, `⋄⋄ : j ≡ J` then ends
+  the inner cascade after `j = J−1` without an empty generation `j = J`.
+  An unbounded generational rank, which is every cascade before this patch,
+  is unchanged.
+- **A diamond that looks ahead of the body.** The body writes `Z_i`; the
+  diamond reads `Z_{i+1}`. After generation `g` it cannot be decided at
+  `i = g`, because `Z_{g+1}` is not written. The patch evaluates it at
+  `i = g − (r − w)`, with `r` the largest shift of `i` the diamond's operands
+  read and `w` the largest the body writes: the latest `i` whose operands
+  exist. The tutorial's own trace agrees ("Pass 2 ... changes nothing, so
+  ... `Z_{2,J−1} ≡ Z_{1,J−1}`, and the outer cascade halts"). When `r ≤ w`,
+  which is every cascade before this patch, nothing changes.
+
+**Questions.**
+
+1. Is the look-ahead rule the intended timing (it extends Q5 of
+   docs/stopping_condition_open_questions.md), or should bubble sort's body
+   write `Z_{i+1}`?
+2. The tutorial states the ranges of its three Einsums (`j ≥ 1`, `i ≥ 1`)
+   only in `▷` remarks. As written, all three run at every `(i, j)`. With
+   intersect merges (issue 8, question 3) the extra runs write nothing new or
+   rewrite the same values, so the answer is right, but pass 0 is rewritten in
+   every pass. Should the ranges be restrictions on the Einsums?
+3. The single-assignment pass still knows one iterative rank, so bubble sort's
+   three writes of `Z` are reported as overlapping (they are, as written).
+
+**Blocks:** the bubble-sort walkthrough. Fixed locally for now (see the end
+of this file).
+
+---
+
 ## Local changes in edge-core-ir, for review
 
 Uncommitted edits in edge-core-ir, all needing Toluwa's decision.
+
+Made on 2026-11-16, at Sanjana's request ("add the code to handle cases and
+macros as local patches"). All 896 existing tests pass unchanged; 27 new ones:
+
+- issue 8, case statements: `Cases` and `CaseArm` in `edge_ir/ir/einsum.py`
+  (`Einsum.expression` admits `Cases`); `edge_ir/evaluator/einsum.py` splits
+  Map-and-Reduce from Populate and evaluates a case statement arm by arm
+  (`EinsumResult.arms`); the walkers in `edge_ir/analysis/iteration_space.py`,
+  `edge_ir/evaluator/iteration.py` and `edge_ir/validator/udf_names.py` read
+  arms; `tests/test_case_statement.py`.
+- issue 9, macros and conditional cascades: `edge_ir/ir/macro.py` (new);
+  `ConditionalCascade`, `ConditionalArm` and `flatten` in
+  `edge_ir/ir/einsum.py`; `edge_ir/evaluator/cascade.py` runs a tree-shaped
+  body; `edge_ir/validator/single_assignment.py` numbers Einsums as `flatten`
+  does and skips pairs in different arms of one conditional cascade;
+  `tests/test_conditional_cascade_and_macros.py`.
+- issue 10, inner cascades: `NestedCascade.einsums` admits a `NestedCascade`;
+  `edge_ir/evaluator/cascade.py` (`pinned` on `run_cascade`, `_rank_bound`,
+  `_lookahead`) and `edge_ir/evaluator/stopping.py` (`should_stop(outer=)`);
+  `tests/test_nested_cascade.py` and `tests/_bubble_sort_program.py`, the
+  bubble-sort program, checked against the tutorial's step table.
+- `schemas/program.schema.json` regenerated
+  (`json.dumps(Program.model_json_schema(), indent=2)`).
+
+Not changed: any example, any existing test, `Program`'s fields (so every
+serialized program still round-trips), her docs.
 
 Made on 2026-10-26, with the user's go-ahead, so other tutorials are not held
 up while issues 1, 2 and 7 wait upstream:
@@ -219,6 +425,32 @@ Made before the "raise an issue, don't edit" rule:
   `einsum.md`, functions, program JSON, `CHANGES.md` and `metadata.md`, with
   matching test edits in `tests/test_max_flow_artifact.py` and
   `tests/test_evaluator_acceptance.py`.
+
+---
+
+## For the DO-BFS tutorial, not edge-core-ir
+
+What stops the hybrid cascade (Variants, "Hybrid (Direction-Optimizing)") from
+being built into a page. The IR and the evaluator can run it (issue 9).
+
+1. **No values for α and β.** The tutorial says they "are typically chosen
+   empirically"; the worked example gives none. They are inputs, and the
+   tutorial-data step may only state what the tutorial states.
+2. **Undeclared tensors.** The hybrid block declares `G`, `F`, `Tree`,
+   `CandParents`, `InF` and `TopDown`. The macros also write `MF`, `MU`, `NF`,
+   `TB`, `BT`, `Nei`, `NeiNV`, `CandTree`, `Temp`, `Visited` and `NV`, whose
+   types and empty values are not given. `MF`, `MU` and `NF` are counts
+   (`:: ⋁ +(∪)` over Booleans); `TB`/`BT` compare them.
+3. **Unlabelled arithmetic.** `TB_i = TMF_i · (TMU_i / α) :: ⋀ >(∩)` has two
+   operations and one action; the division's merge is not written.
+4. **The tool.** `einsum.edge` has no syntax yet for a `MACRO` section or a
+   multi-output case statement, the tutorial reader does not read the macro
+   blocks, and the label map does not follow formal names to actual ones.
+   The driver, coverage and the builder prompt already handle a conditional
+   cascade.
+
+The bottom-up cascade has none of these problems and builds: its
+`einsum.edge` names it with `- Cascade: Bottom-Up`.
 
 ---
 

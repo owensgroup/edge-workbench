@@ -9,7 +9,9 @@ const fs = require("fs");
 const path = require("path");
 const { JSDOM, VirtualConsole } = require("jsdom");
 
-const EXAMPLES = path.join(__dirname, "..", "examples");
+// EDGE_WORKBENCH_PAGES: another directory of author directories to walk
+// instead (pages built outside examples/).
+const EXAMPLES = process.env.EDGE_WORKBENCH_PAGES || path.join(__dirname, "..", "examples");
 let passed = 0;
 const failed = [];
 

@@ -10,7 +10,14 @@
 
 - A Reduce attaches to a binary expression in the IR, so a bare reduce is
   lowered as a transparent `take_left` Map against a literal.
-- `I` is the generational rank and stays hard-coded.
+- `I` is the generational rank and stays hard-coded. An inner cascade's rank
+  (bubble sort's step rank `J`) is an ordinary rank of the tensor: the page
+  shows one generation of `I` at a time, with the inner rank as an axis.
+- A case statement is one IR Einsum whose expression is `Cases`; each arm
+  has its own expression, specs and condition, and the first arm whose
+  condition holds claims a point (issue 8). A conditional cascade runs one
+  arm's Einsums per generation (issue 9). IR nodes are numbered depth first
+  through arms and inner cascades (`cascade_shape.flat_nodes`).
 - Captions: the author's `**Graph meaning:**` / `**Einsum meaning:**` lines
   under each formula in `edge_expression_walkthrough` win; then the model's
   text; then a sentence generated from the IR (`render/action_prose.py`).
@@ -44,5 +51,12 @@
   the next line, and `<user-specified>` init lines. If an Einsum is missing
   from the parsed cascade, suspect formatting first.
 - A cascade gets 500 generations to reach its stopping condition.
+- A generational rank declared with a shape (`I = N-1`) bounds its cascade:
+  generation `i` runs only for `i` in `[0, I)` (issue 10).
+- Coverage: everything outside an arm must run on the worked example; an arm
+  of a case statement or of a conditional cascade must be exercised by the
+  worked example or by one of the verifier's random instances.
+- A function-call arm (`min(x, y)`) states no merge; builders use intersect.
+- `j-1` in a subscript is rank arithmetic, not a hyphenated operator name.
 - Coordinates start at 0; a tutorial numbering vertices from 1 shows an
   unused vertex 0 on the page.

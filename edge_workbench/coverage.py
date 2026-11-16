@@ -26,9 +26,37 @@ THREE DISTINCT THINGS, WHICH ARE EASY TO CONFLATE
 
 (1) without (2) is the trap: the label map looks complete, the build is
 green, and an Einsum sat out the whole run.
+
+ARMS: WHAT "EXECUTED" MEANS WHEN THE SPECIFICATION BRANCHES
+-----------------------------------------------------------
+Two constructs make part of what the author wrote conditional:
+
+  * a case statement gives one Einsum several arms, each over a region of
+    its iteration space (`... if n = j+1`). An arm whose region is empty in
+    every run of the Einsum computed nothing;
+  * a conditional cascade runs ONE of several Einsum sequences per
+    generation (`TOP-DOWN(...) if TopDown_i == True`). The Einsums of an arm
+    the run never takes did not run.
+
+A worked example is small, and the tutorial's author chose it: a BFS on six
+vertices may never switch direction. Failing the build for that would ask the
+author to change the example to suit the tool. Passing it silently would
+bring back the failure this gate exists for. So:
+
+  * everything outside an arm must execute on the worked example, as before;
+  * an arm must be exercised by the worked example OR by at least one of the
+    verifier's random instances -- the same instances whose answers are
+    checked, so an arm counted here is an arm whose result was verified;
+  * an arm the worked example never reaches is named on the coverage line
+    and marked on the page, so a reader is not shown it as something that
+    happened.
+
+An arm written `empty` computes nothing and is not counted.
 """
 
 from __future__ import annotations
+
+from edge_workbench.cascade_shape import flat_nodes, stopping_conditions  # noqa: F401
 
 from dataclasses import dataclass, field
 
@@ -46,22 +74,42 @@ class Coverage:
     init_executed: int = 0
     node_count: int = 0
 
+    not_on_example: list[str] = field(default_factory=list)
+    """Arms the worked example never reached, as the report names them:
+    `E03 case 4 (n > j+1)`, `E09 (BOTTOM-UP arm)`."""
+
+    unexercised: list[str] = field(default_factory=list)
+    """Of those, the ones no random instance reached either. Fatal."""
+
+    arm_keys: list[str] = field(default_factory=list)
+    """Tally keys behind `not_on_example`, in the same order."""
+
+    @property
+    def needs_instances(self) -> bool:
+        """True when random instances have to be consulted for some arm."""
+        return bool(self.not_on_example)
+
     @property
     def ok(self) -> bool:
         return (
             not self.unmapped_nodes
             and not self.never_executed
+            and not self.unexercised
             and self.init_executed >= self.init_expected
         )
 
     def summary(self) -> str:
         ran = len(self.executions)
         total = sum(self.executions.values())
-        return (
+        text = (
             f"{ran} written Einsums over {self.node_count} IR nodes, "
             f"{total} executions, {self.init_executed}/{self.init_expected} "
             f"initialization"
         )
+        if self.not_on_example:
+            text += (f"; not reached on the worked example, exercised by a "
+                     f"random instance: {', '.join(self.not_on_example)}")
+        return text
 
     def report(self) -> str:
         lines = []
@@ -80,6 +128,14 @@ class Coverage:
                 f"run. A page showing them as steps would be showing work "
                 f"that did not happen."
             )
+        if self.unexercised:
+            lines.append(
+                f"  arms nothing exercised: {self.unexercised}\n"
+                f"    Neither the worked example nor any of the verifier's "
+                f"random instances reaches these. An arm no run takes is "
+                f"specification nobody has checked: make `random_instance` "
+                f"produce an instance that takes it."
+            )
         if self.init_executed < self.init_expected:
             lines.append(
                 f"  initialization: {self.init_executed} of "
@@ -97,7 +153,13 @@ def _mapped_indices(labels: dict) -> dict[int, str]:
     return owner
 
 
-def measure(program: dict, cascade: dict, executed: dict) -> Coverage:
+def arm_key(node: int, arm: int) -> str:
+    """The tally key for one arm of a case statement."""
+    return f"{node}#arm{arm}"
+
+
+def measure(program: dict, cascade: dict, executed: dict,
+            elsewhere: dict | None = None) -> Coverage:
     """Compare what the spec contains against what the run actually ran.
 
     `program` is the IR, `cascade` the label map, and `executed` the driver's
@@ -108,8 +170,14 @@ def measure(program: dict, cascade: dict, executed: dict) -> Coverage:
     initialization runs four Einsums and emits one step, and a lowered
     `cases` runs three and emits one. Counting steps would call those covered
     while three quarters of the nodes sat idle.
+
+    `elsewhere` is the same tally summed over the verifier's random
+    instances; it is consulted only for arms (see the module docstring), and
+    None means it has not been collected yet.
     """
-    nodes = program["main_edge"]["cascade"]["einsums"]
+    from edge_workbench import cascade_shape as shape
+
+    nodes = flat_nodes(program)
     init = program.get("initialization", {}).get("einsums", [])
     labels = cascade.get("labels", {})
     owner = _mapped_indices(labels)
@@ -120,15 +188,43 @@ def measure(program: dict, cascade: dict, executed: dict) -> Coverage:
     # report speaks in the spec's own names. A label counts as executed only
     # if EVERY node it lowered to ran -- an unexecuted `cases` arm is a piece
     # of the written Einsum that did not happen.
+    placed = shape.placement(program)
+    literals = shape.literal_values(program)
+
+    def count(tally: dict | None, key) -> int:
+        tally = tally or {}
+        return tally.get(key, tally.get(str(key), 0))
+
     executions: dict[str, int] = {}
     never: list[str] = []
+    pending: list[tuple[str, str]] = []      # (tally key, how to name it)
     for label, value in labels.items():
         idxs = value if isinstance(value, list) else [value]
-        counts = [executed.get(i, executed.get(str(i), 0)) for i in idxs]
-        if not all(counts):
-            never.append(label)
+        counts = [count(executed, i) for i in idxs]
         executions[label] = min(counts) if counts else 0
+        for i, n in zip(idxs, counts):
+            in_arm = placed[i]["arms"] if i < len(placed) else []
+            if not n:
+                if in_arm:
+                    arm = in_arm[-1]
+                    what = (f"{arm['macro']} arm" if arm.get("macro")
+                            else f"arm {arm['arm'] + 1} of {arm['of']}")
+                    pending.append((str(i), f"{label} ({what})"))
+                elif label not in never:
+                    never.append(label)
+                continue
+            # The Einsum ran; each of its case arms must have claimed a point.
+            for k, arm in enumerate(shape.arms(nodes[i])):
+                if arm.get("expression") is None:
+                    continue
+                if not count(executed, arm_key(i, k)):
+                    cond = shape.arm_condition(arm, literals) or "otherwise"
+                    pending.append((arm_key(i, k),
+                                    f"{label} case {k + 1} ({cond})"))
 
+    unexercised = ([name for key, name in pending
+                    if not count(elsewhere, key)]
+                   if elsewhere is not None else [])
     return Coverage(
         executions=dict(sorted(executions.items())),
         unmapped_nodes=[i for i in range(len(nodes)) if i not in owner],
@@ -136,4 +232,7 @@ def measure(program: dict, cascade: dict, executed: dict) -> Coverage:
         init_expected=len(init),
         init_executed=sum(1 for k in range(len(init)) if f"init:{k}" in ran),
         node_count=len(nodes),
+        not_on_example=[name for _, name in pending],
+        arm_keys=[key for key, _ in pending],
+        unexercised=unexercised,
     )

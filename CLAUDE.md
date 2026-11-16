@@ -35,7 +35,7 @@ learned: [docs/DESIGN.md](docs/DESIGN.md).
   sub-steps, never as new helper tensors. List any unavoidable change.
 - **edge-core-ir belongs to Toluwa.** Do not edit it; write gaps up in
   [docs/issues-for-edge-core-ir.md](docs/issues-for-edge-core-ir.md). Exception:
-  issues 1, 2 and 7 are fixed locally, uncommitted, in her checkout.
+  issues 1, 2, 7, 8, 9 and 10 are fixed locally, uncommitted, in her checkout.
 - **Her evaluator is the only evaluator.** The page replays its trace; nothing
   in this repo evaluates Einsums, in Python or JS.
 - **Fixes go in the tool, not in one page.** Every fix should help future algorithms.

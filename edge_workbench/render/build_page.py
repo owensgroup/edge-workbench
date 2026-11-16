@@ -98,6 +98,28 @@ def verify_meanings(cascade, meanings):
         )
 
 
+def _exercised_by_random_instances(cascade):
+    """The driver's tally, summed over the verifier's random instances.
+
+    The same instances the answer check runs (`verifier.sample`, seeded by
+    the tutorial's name). An instance the cascade cannot run adds nothing
+    here; the answer check reports it.
+    """
+    from edge_workbench import verifier as _v
+    mod = _v.load(Path(AUTHOR_VERIFIER))
+    total = {}
+    for inst in _v.sample(mod, ALG, _v.N_RANDOM).instances:
+        if inst is None:
+            continue
+        try:
+            run = _v.final_state(Path(SPEC), inst, 0, cascade)
+        except Exception:                                  # noqa: BLE001
+            continue
+        for key, n in run["executed"].items():
+            total[key] = total.get(key, 0) + n
+    return total
+
+
 def verify_coverage(program, cascade, executed):
     """Every Einsum the author wrote must have run.
 
@@ -114,6 +136,14 @@ def verify_coverage(program, cascade, executed):
     Einsums and emits one step, a lowered `cases` runs three and emits one.
     """
     cov = coverage.measure(program, cascade, executed)
+    if cov.needs_instances and AUTHOR_VERIFIER:
+        # An arm of a case statement or of a conditional cascade that the
+        # worked example never reaches: it must be exercised by one of the
+        # verifier's random instances, whose answers the next gate checks.
+        cov = coverage.measure(program, cascade, executed,
+                               _exercised_by_random_instances(cascade))
+    elif cov.needs_instances:
+        cov = coverage.measure(program, cascade, executed, {})
     print("coverage      :", cov.summary())
     if not cov.ok:
         sys.exit("\nBUILD ABORTED: the specification did not fully execute.\n"
@@ -159,7 +189,7 @@ _run=driver.run(ALG)
 # Both gates, on this run's own output. Coverage first: if the spec did not
 # fully execute, whether the answer happens to be right is beside the point.
 IR_PROGRAM=json.load(open(driver._program_file(paths.spec(ALG))))
-verify_coverage(IR_PROGRAM, CASCADE, _run["executed"])
+_COVERAGE=verify_coverage(IR_PROGRAM, CASCADE, _run["executed"])
 verify_meanings(CASCADE, tutorial_meanings())
 verify_algorithm()
 
@@ -210,6 +240,10 @@ _written_path=paths.spec(ALG)/"written.json"
 WRITTEN=json.loads(_written_path.read_text()) if _written_path.exists() else {}
 T=ann.annotate({"steps":_run["steps"]}, meta, LATEX)
 T["iterations"]=_run["generations"]
+# The outer cascade's iterative rank variable, for the generation badge.
+from edge_workbench import cascade_shape as _shape     # noqa: E402
+_placed=_shape.placement(IR_PROGRAM)
+T["genVar"]=(_placed[0]["ranks"][0] if _placed and _placed[0]["ranks"] else "i")
 # In a bipartite picture a node id carries its side (`R:0`, `C:2`), because
 # row 0 and column 0 are different nodes. The generic highlight speaks bare
 # indices, so qualify them by the ranks of the tensor each step wrote.
@@ -228,6 +262,13 @@ if (NAMED_VIEW or DERIVED_VIEW["view"]) == domain_shape.BIPARTITE:
 T["graph"]=INSTANCE.get("domain",{}).get("graph")
 T["note"]=("computed by edge-core-ir's reference evaluator over the instance; "
            "no part of this page comes from a hand-written implementation")
+if _COVERAGE.not_on_example:
+    # Arms this example never takes are not steps, so nothing else on the
+    # page would say they exist.
+    T["notReached"]=_COVERAGE.not_on_example
+    T["note"]+=("; this example never reaches "
+                + ", ".join(_COVERAGE.not_on_example)
+                + " (checked on the verifier's random instances instead)")
 if AUTHOR_VERIFIER:
     # The number in the corner is the verifier's reading of the final state:
     # the same function the answer gate just checked against `solve`.
@@ -784,7 +825,12 @@ function render(){
   const ss=s.setupSteps||[]; $('sslabel').style.display=$('ss').style.display=ss.length?'':'none';
   $('ss').innerHTML=''; ss.forEach(t=>{const li=document.createElement('li');li.textContent=t;$('ss').appendChild(li);});
   buildExec();
-  $('itbadge').innerHTML=s.iteration!=null?'<i>i</i> = '+s.iteration:'setup';
+  // An Einsum in an inner cascade runs in a generation of each cascade
+  // around it: `i = 1, j = 2`.
+  $('itbadge').innerHTML=s.iteration!=null
+    ?'<i>'+(T.genVar||'i')+'</i> = '+s.iteration+Object.entries(s.inner||{})
+       .map(([v,c])=>', <i>'+v+'</i> = '+c).join('')
+    :'setup';
   $('stepno').textContent=`step ${cur+1} of ${T.steps.length}`;
   $('flow').textContent = (cur===T.steps.length-1 && T.headline)
     ? T.headline.label+' = '+T.headline.value : '';
@@ -793,8 +839,10 @@ function delay(){return 1260-(+$('speed').value);}
 function go(i){showBefore=false;cur=Math.max(0,Math.min(T.steps.length-1,i));render();}
 $('next').onclick=()=>go(cur+1);$('prev').onclick=()=>go(cur-1);
 $('first').onclick=()=>go(0);$('last').onclick=()=>go(T.steps.length-1);
-$('nextit').onclick=()=>{const it=T.steps[cur].iteration;let i=cur+1;
-  while(i<T.steps.length&&T.steps[i].iteration===it)i++;go(i);};
+// The next generation: of the innermost cascade this step ran in.
+const genKey=s=>s.iteration+'|'+JSON.stringify(s.inner||null);
+$('nextit').onclick=()=>{const it=genKey(T.steps[cur]);let i=cur+1;
+  while(i<T.steps.length&&genKey(T.steps[i])===it)i++;go(i);};
 $('slider').oninput=e=>go(+e.target.value);
 $('play').onclick=()=>{if(timer){clearInterval(timer);timer=null;$('play').textContent='▶ play';return;}
   $('play').textContent='❚❚ pause';
@@ -916,7 +964,14 @@ function renderPoint(clicked){
   h.push('<div style="font-family:ui-monospace,monospace;font-size:13px;'+
     'margin-bottom:11px">'+R.iterVars
       .filter(v=>!(R.reduceSpec&&(R.reduceSpec.rank_list||[]).includes(v)))
+      .filter(v=>shown.bind[v]!==undefined)
       .map(v=>'<b>'+v+'</b> = '+shown.bind[v]).join('&nbsp;&nbsp;')+'</div>');
+  // A case statement: say which arm claimed this point, by its condition.
+  if(R.arms&&shown.arm!==undefined){
+    const arm=R.arms[shown.arm];
+    h.push('<div class="collapse">Case '+(shown.arm+1)+' of '+R.arms.length+
+      ': <b>'+(arm.condition?EdgeDisplay.esc(arm.condition):'otherwise')+
+      '</b></div>');}
 
   // The derivation, innermost first, so it reads as a sequence of moves.
   // A reduction lists every contribution below, so one point's operands here

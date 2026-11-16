@@ -88,12 +88,26 @@ Check each Einsum against this before checkpoint B. The issue numbers are in
   per category (compute, merge, coordinate, unary), before using it.
 - **A unary takes only a named tensor**, not a parenthesized expression
   (issue 3): `⌊F / |R|⌋` needs the degenerate-Map form or a split.
-- **No `cases` and no macros**: DOBFS bottom-up and hybrid, and bubble sort,
-  cannot run yet. Say so at checkpoint B rather than lowering around it.
+- **`cases` and inner cascades run; macros do not yet.** A case statement is
+  one Einsum (`= cases:` and one arm per line, AUTHORING.md §2), and an inner
+  cascade is the Einsums between `- Begin inner cascade` and its `<><> :`
+  line; bubble sort uses both. A macro, or a case statement choosing between
+  macros (DOBFS hybrid), cannot be written in `einsum.edge` yet although the
+  evaluator can run one (issue 9): say so at checkpoint B rather than
+  lowering around it.
+- **Give every arm of a case statement a condition the worked example or a
+  random instance reaches**; an arm nothing exercises stops `check`.
+- **A function-call arm, `min(x, y)`, states no merge**; the builder lowers
+  it with intersect and says so (issue 8, question 3). If the algorithm needs
+  another merge, write the arm as `x . y :: /\ min(∪)`.
+- **A tutorial with several cascades is one author directory per cascade.**
+  `einsum.edge` names any cascade other than `edge_expression` with a
+  `- Cascade: <name>` line (DOBFS bottom-up).
 - **Patched locally, not yet upstream**: occupancy `‖T‖` inside an Einsum
   (issue 1), a reduce inside parentheses (issue 2), a reduce over an empty
-  fiber writing nothing (issue 7). They run on this machine; mention their use
-  in the report.
+  fiber writing nothing (issue 7), case statements (issue 8), conditional
+  cascades and macro expansion (issue 9), inner cascades (issue 10). They run
+  on this machine; mention their use in the report.
 - **Generations are capped at 500** per run.
 - **Coordinates start at 0**; a tutorial that numbers vertices from 1 shows an
   unused vertex 0.

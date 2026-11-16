@@ -22,6 +22,8 @@ edge-core-ir would replace that; see docs/issues-for-edge-core-ir.md.
 
 from __future__ import annotations
 
+from edge_workbench.cascade_shape import flat_nodes, stopping_conditions  # noqa: F401
+
 import importlib.util
 import json
 import sys
@@ -87,7 +89,7 @@ def run(algorithm: str | None = None, *, spec_dir: str | Path | None = None,
             )
     except EvaluationError as e:
         raise DriverError(f"the cascade did not run.\n{type(e).__name__}: {e}") from e
-    return _steps(prog_json, cascade, records, result)
+    return _steps(prog_json, cascade, records, result, parsed)
 
 
 # ------------------------------------------------------------- inputs ---
@@ -358,9 +360,15 @@ def _exec_record(rec: dict, node_json: dict, gen_tensors: set[str],
                 "value": cells.get(coord) if present else None,
                 "emptyValue": empty}
 
-    projections = list(input_projections(einsum.expression))
-    rank_values = _rank_values(einsum.expression)
-    occupancies = _occupancies(einsum.expression)
+    # A case statement is evaluated arm by arm, each over the region of the
+    # iteration space it claimed; every other Einsum is one "arm".
+    is_cases = getattr(einsum.expression, "kind", None) == "cases"
+    if is_cases:
+        parts = [(k, arm.expression, res.arms[k])
+                 for k, arm in enumerate(einsum.expression.arms)
+                 if arm.expression is not None and res.arms[k] is not None]
+    else:
+        parts = [(None, einsum.expression, res)]
 
     def counted(node, bound):
         """||T||: what it counts, so the page can draw T and not just a number.
@@ -379,34 +387,45 @@ def _exec_record(rec: dict, node_json: dict, gen_tensors: set[str],
     points = []
     produced_keys = set()
     out_space = env.spaces.get(out_name)
-    for p in space.points:
-        bound = space.point_map(p)
-        proj = einsum_projection(list(einsum.output_ranks), bound, p,
-                                 output_space=out_space,
-                                 shape_env=env.shape_env, registry=env.functions)
-        if not proj.defined:
-            continue
-        key = _key(tuple(proj.output_coord), out_gen)
-        produced_keys.add(key)
-        present = p in res.map_tmp
-        points.append({
-            "coord": key,
-            "bind": {a: v for a, v in zip(space.axes, p)},
-            "present": present,
-            "value": res.map_tmp.get(p) if present else None,
-            "prov": {"reads": [read(pr, bound) for pr in projections]
-                     + [counted(oc, bound) for oc in occupancies]
-                     + [{"rank": _rank_text(rv.expr.model_dump()),
-                         "scalar": True, "present": True,
-                         "value": evaluate_rank_expression(
-                             rv.expr, bound, shape_env=env.shape_env,
-                             registry=env.functions)}
-                        for rv in rank_values]},
-        })
-        if rec.get("inner_map") is not None:
-            inner = rec["inner_map"][p]
-            points[-1]["afterMap"] = {k: inner[k] for k in ("present", "value")}
-            points[-1]["afterReduce"] = inner["reduced"]
+    iter_vars: list[str] = []
+    for arm_index, expression, res in parts:
+        space = res.iteration_space
+        iter_vars += [a for a in space.axes if a not in iter_vars]
+        projections = list(input_projections(expression))
+        rank_values = _rank_values(expression)
+        occupancies = _occupancies(expression)
+        for p in space.points:
+            bound = space.point_map(p)
+            proj = einsum_projection(list(einsum.output_ranks), bound, p,
+                                     output_space=out_space,
+                                     shape_env=env.shape_env,
+                                     registry=env.functions)
+            if not proj.defined:
+                continue
+            key = _key(tuple(proj.output_coord), out_gen)
+            produced_keys.add(key)
+            present = p in res.map_tmp
+            points.append({
+                "coord": key,
+                "bind": {a: v for a, v in zip(space.axes, p)},
+                "present": present,
+                "value": res.map_tmp.get(p) if present else None,
+                "prov": {"reads": [read(pr, bound) for pr in projections]
+                         + [counted(oc, bound) for oc in occupancies]
+                         + [{"rank": _rank_text(rv.expr.model_dump()),
+                             "scalar": True, "present": True,
+                             "value": evaluate_rank_expression(
+                                 rv.expr, bound, shape_env=env.shape_env,
+                                 registry=env.functions)}
+                            for rv in rank_values]},
+            })
+            if arm_index is not None:
+                points[-1]["arm"] = arm_index
+            if rec.get("inner_map") is not None:
+                inner = rec["inner_map"][p]
+                points[-1]["afterMap"] = {k: inner[k]
+                                          for k in ("present", "value")}
+                points[-1]["afterReduce"] = inner["reduced"]
     after_out = _flat({out_name: rec["after"].get(out_name, {})}, gen_tensors,
                       alias, {out_name: rec["written_gen"]})
     shown_out = alias.get(out_name, out_name)
@@ -415,10 +434,23 @@ def _exec_record(rec: dict, node_json: dict, gen_tensors: set[str],
     reduce_spec = next((s for s in node_json.get("specs", [])
                         if s.get("kind") == "reduce"), None)
     decl = decls.get(out_name)
+    record_extra = {}
+    if is_cases:
+        from edge_workbench.cascade_shape import arm_condition
+
+        literals = {d.name: d.value for d in decls.values()
+                    if not d.ranks and d.value is not None}
+        record_extra["arms"] = [
+            {"condition": arm_condition(arm.model_dump(), literals),
+             "empty": arm.expression is None,
+             "points": (len(res_k.iteration_space)
+                        if (res_k := rec["result"].arms[k]) is not None else 0)}
+            for k, arm in enumerate(einsum.expression.arms)]
     return {
+        **record_extra,
         "einsum": node_json,
         "output": shown_out,
-        "iterVars": list(space.axes),
+        "iterVars": iter_vars,
         "points": points,
         "result": result,
         "reduceSpec": reduce_spec,
@@ -426,12 +458,23 @@ def _exec_record(rec: dict, node_json: dict, gen_tensors: set[str],
     }
 
 
-def _steps(program: dict, cascade: dict, records: list[dict], result) -> dict:
+def _steps(program: dict, cascade: dict, records: list[dict], result,
+           parsed=None) -> dict:
+    """The run as the page's steps, one per written Einsum executed.
+
+    A record is matched to its IR node by identity, not by position: with a
+    conditional cascade or an inner cascade (edge-core-ir local patches) a
+    generation does not run every node, or runs some of them many times, so
+    "the k-th record of generation g" names nothing.
+    """
+    from edge_workbench.cascade_shape import flat_nodes, placement
+
     gen = cascade.get("generationalRank", "I")
     gen_tensors = _gen_ranks(program, gen)
     alias = cascade.get("displayNames", {}) or {}
     init_nodes = program.get("initialization", {}).get("einsums", [])
-    body = program["main_edge"]["cascade"]["einsums"]
+    body = flat_nodes(program)
+    where = placement(program)
     owner: dict[int, str] = {}
     for label, idx in (cascade.get("labels") or {}).items():
         for k in (idx if isinstance(idx, list) else [idx]):
@@ -458,34 +501,66 @@ def _steps(program: dict, cascade: dict, records: list[dict], result) -> dict:
                   "state": _flat(last, gen_tensors, alias,
                                  init_recs[-1]["written"] if init_recs else None)})
 
-    per_gen = len(body)
+    # Which flat node each record ran. Without the parsed program (an older
+    # caller) the body is flat and records come in node order per generation.
+    if parsed is not None:
+        from edge_ir.ir.einsum import flatten
+
+        index_of = {id(e): k for k, e in enumerate(flatten(parsed.main_edge.cascade))}
+        node_of = [index_of[id(rec["einsum"])] for rec in body_recs]
+    else:
+        node_of = [k % len(body) for k in range(len(body_recs))]
+
+    outer = (where[0]["ranks"][0] if where and where[0]["ranks"]
+             else gen.lower())
     generations = result.trace.generations
-    for g in range(generations):
-        recs = body_recs[g * per_gen:(g + 1) * per_gen]
-        k = 0
-        while k < len(recs):
-            label = owner.get(k, f"node{k}")
-            j = k
-            while j + 1 < len(recs) and owner.get(j + 1) == label:
-                j += 1
-            for n in range(k, j + 1):
-                executed[str(n)] = executed.get(str(n), 0) + 1
-            rec = recs[j]
-            out = rec["einsum"].output_tensor
-            step = {"id": len(steps), "einsum": label,
-                    "iteration": rec["pinned"].get(gen.lower(),
-                                                   next(iter(rec["pinned"].values()), g)),
-                    "output": alias.get(out, out),
-                    "state": _flat(rec["after"], gen_tensors, alias,
-                                   rec["written"])}
-            if j == k:
-                step["exec"] = _exec_record(rec, body[k], gen_tensors, alias)
-            steps.append(step)
-            k = j + 1
+    k = 0
+    while k < len(body_recs):
+        label = owner.get(node_of[k], f"node{node_of[k]}")
+        j = k
+        # One written Einsum lowered to several consecutive IR nodes (an
+        # older lowering of `cases`) is one step: its last node's state.
+        while (j + 1 < len(body_recs) and owner.get(node_of[j + 1]) == label
+               and node_of[j + 1] == node_of[j] + 1
+               and body_recs[j + 1]["pinned"] == body_recs[k]["pinned"]):
+            j += 1
+        for n in range(k, j + 1):
+            key = str(node_of[n])
+            executed[key] = executed.get(key, 0) + 1
+            # A case statement's arms: one tally each, counting the runs in
+            # which the arm claimed at least one point (coverage.arm_key).
+            for a, arm in enumerate(getattr(body_recs[n]["result"], "arms", [])
+                                    or []):
+                if arm is not None and len(arm.iteration_space):
+                    key = f"{node_of[n]}#arm{a}"
+                    executed[key] = executed.get(key, 0) + 1
+        rec = body_recs[j]
+        out = rec["einsum"].output_tensor
+        pinned = rec["pinned"]
+        step = {"id": len(steps), "einsum": label,
+                "iteration": pinned.get(outer,
+                                        next(iter(pinned.values()), None)),
+                "output": alias.get(out, out),
+                "state": _flat(rec["after"], gen_tensors, alias,
+                               rec["written"])}
+        inner = {v: c for v, c in pinned.items() if v != outer}
+        if inner:
+            # The generations of the inner cascades this Einsum ran in.
+            step["inner"] = inner
+        arms = where[node_of[j]]["arms"]
+        if arms:
+            # Which arm of a conditional cascade this is, so the page can say
+            # which one this generation took.
+            step["arm"] = arms[-1]
+        if j == k:
+            step["exec"] = _exec_record(rec, body[node_of[k]], gen_tensors, alias)
+        steps.append(step)
+        k = j + 1
 
     final = body_recs[-1]["after"] if body_recs else last
     steps.append({"id": len(steps), "einsum": cascade.get("stopLabel", "stop"),
-                  "iteration": generations - 1 if generations else None,
+                  "iteration": (steps[-1]["iteration"] if len(steps) > 1
+                                else None),
                   "output": None,
                   "state": _flat(final, gen_tensors, alias,
                                  body_recs[-1]["written"] if body_recs else None)})

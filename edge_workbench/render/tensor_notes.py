@@ -22,6 +22,8 @@ Deriving the second group is not a substitute for prose an author might write
 
 from __future__ import annotations
 
+from edge_workbench.cascade_shape import flat_nodes, stopping_conditions  # noqa: F401
+
 from typing import Any
 
 
@@ -53,7 +55,7 @@ def derive(program: dict, cascade: dict, alias: dict | None = None) -> dict:
     """tensor -> where it comes from and where it goes, from the program."""
     alias = alias or cascade.get("displayNames", {})
     labels = cascade.get("labels", {})
-    nodes = program["main_edge"]["cascade"]["einsums"]
+    nodes = flat_nodes(program)
 
     owner: dict[int, str] = {}
     for label, idx in labels.items():

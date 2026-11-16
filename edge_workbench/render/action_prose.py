@@ -26,6 +26,8 @@ determine something, this says nothing about it instead of guessing.
 
 from __future__ import annotations
 
+from edge_workbench.cascade_shape import flat_nodes, stopping_conditions  # noqa: F401
+
 from typing import Any
 
 THAT = "that"          # the value of the step just described
@@ -463,7 +465,7 @@ def describe_all(program: dict, cascade: dict,
     """label -> what that Einsum does over its iteration space."""
     d = Describer(program, alias or cascade.get("displayNames", {}),
                   cascade.get("generationalRank", "I"))
-    nodes = program["main_edge"]["cascade"]["einsums"]
+    nodes = flat_nodes(program)
     out: dict[str, str] = {}
     for label, idx in (cascade.get("labels") or {}).items():
         idxs = idx if isinstance(idx, list) else [idx]
@@ -472,7 +474,7 @@ def describe_all(program: dict, cascade: dict,
     init = program.get("initialization", {}).get("einsums", [])
     if init:
         out[cascade.get("initLabel", "init")] = d.describe_group(init)
-    conds = program["main_edge"]["cascade"].get("stopping_conditions") or []
+    conds = stopping_conditions(program)
     if conds:
         out[cascade.get("stopLabel", "stop")] = d.stopping(conds[0])
     return out

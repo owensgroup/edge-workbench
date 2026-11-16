@@ -48,7 +48,9 @@ only at the start.
 
 - The `check` pipeline above, with every model step paste-based (no API in CI).
 - Four algorithms passing end to end: max-flow, set-cover, Bellman-Ford,
-  direction-optimizing BFS (top-down).
+  direction-optimizing BFS (top-down). Bubble sort (case statements in a
+  nested cascade) and DO-BFS bottom-up pass from scratch directories; bubble
+  sort is a test fixture, not an example, until its verifier is approved.
 - The page: per-Einsum drill-down, After Map / After Reduce grids, a
   before/after toggle, graph and bipartite views, typeset captions from the
   author's Graph and Einsum meanings.
@@ -62,7 +64,7 @@ only at the start.
 | 1 | The purpose is teaching: exact tensors, the iteration space | Tensor execution is what's hard to picture | Sanjana |
 | 2 | The spec and the tutorial are the truth, not the IR | The IR is still changing; the author's intent is fixed | Sanjana |
 | 3 | The language owner's interpreter is the only evaluator | A second evaluator drifted and needed hand-fixes | Sanjana |
-| 4 | Gaps in the language become issues, never local patches (except issues 1, 2, 7) | Semantics belong to whoever defines the language | Sanjana |
+| 4 | Gaps in the language become issues, never local patches (except issues 1, 2, 7, 8, 9, 10) | Semantics belong to whoever defines the language | Sanjana |
 | 5 | An independent verifier is required, preferably a different algorithm | A second copy of the same method shares its mistakes | Sanjana; "different algorithm" Claude |
 | 6 | A model fills toolchain gaps (builder, missing meanings) until they're built | Avoids building a whole compiler first | Sanjana |
 | 7 | Author-run, no API in CI: pasted into a chat, or answered in-session by a local agent with the skill (see 32) | Cost and control; the public repo stays clean | Sanjana |
@@ -91,6 +93,9 @@ only at the start.
 | 30 | The verifier is one file, read as text before it is imported: import allowlist, no `open`/`eval`/`exec`, `solve` and `answer`/`certify` share no route | Makes the hash cover the whole verifier; keeps the two answers independent | Claude |
 | 31 | 12 random instances, instance k seeded by `slug:k`; gates on determinism, size, diversity and an `answer` that reads the cascade; all `solve` results computed before any cascade runs; the page line reports `k/12 agree` | A generator that makes one easy instance twelve times proves nothing | Claude |
 | 32 | The skill drafts everything from a named algorithm, pseudocode or a program, answers `check`'s model steps in-session and runs `check` in a loop; it asks the author whenever something is unclear, and stops at three checkpoints: (A) pseudocode, worked example and its expected answer; (B) the cascade; (C) the verifier, which the author chooses and approves in their own terminal. After B the agent may not change an Einsum, the example or its answer without a yes, and never touches the verifier, lock or ledger | One agent writing the spec, example, answer and verifier would share one misunderstanding and agree with itself; the anchors it cannot control are the evaluator, the approved verifier, its random instances and the author's checkpoints | Sanjana; checkpoints Claude |
+| 33 | `cases`, conditional cascades with macro expansion, and inner cascades are local patches to edge-core-ir (issues 8, 9, 10): a case statement is one IR Einsum with arms, a conditional cascade one cascade entry, IR nodes numbered depth first | Bubble sort and DO-BFS could not run; lowering a case statement to one Einsum per arm wrote a slice several times and lost the conditions | Sanjana (patch locally); Claude (design) |
+| 34 | An arm of a case statement or of a conditional cascade must be exercised by the worked example or by one of the verifier's random instances; one the example never reaches is named on the coverage line and the page | The author's example is small and not ours to change, but an arm nothing runs is unchecked specification | Claude |
+| 35 | One author directory, and one page, per cascade; `einsum.edge` names a cascade other than `edge_expression` with `- Cascade: <name>` | A tutorial may give several cascades (DO-BFS has three) and a page replays one run | Claude; open question for Sanjana |
 
 ## What worked
 
@@ -137,7 +142,10 @@ only at the start.
 
 - Toluwa's parser, to replace the model-written builder.
 - Decisions on the edge-core-ir issues; getting the local patches upstream.
-- Macros and `cases` (DOBFS bottom-up and hybrid cannot run).
+- DO-BFS hybrid: macros in `einsum.edge`, and the tutorial's missing α, β and
+  declarations (issues file, "For the DO-BFS tutorial").
+- Whether a remark such as `(j ≥ 1)` over an Einsum should restrict it
+  (issue 10, question 2).
 - Choosing which steps to show on long pages (DOBFS has 34).
 - A non-graph algorithm, to test the sequence view.
 - Rewriting the skill for AI-drafted specs.

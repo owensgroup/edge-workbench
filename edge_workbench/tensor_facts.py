@@ -27,6 +27,8 @@ offer a previous generation for tensors that do not have one.
 
 from __future__ import annotations
 
+from edge_workbench.cascade_shape import flat_nodes, stopping_conditions  # noqa: F401
+
 import json as _json
 import re
 
@@ -89,7 +91,7 @@ def stateful(program: dict, gen_rank: str = "I",
     """
     alias = alias or {}
     declared = _declared(program)
-    einsums = program["main_edge"]["cascade"]["einsums"]
+    einsums = flat_nodes(program)
 
     advanced: set[str] = set()      # written at i+1
     at_current: set[str] = set()    # written at a plain i
@@ -190,11 +192,11 @@ def inputs(program: dict, gen_rank: str = "I") -> list[str]:
     decls = {d["name"]: d for d in program.get("declarations", [])}
     written = set()
     for einsum in (program.get("initialization", {}).get("einsums", [])
-                   + program["main_edge"]["cascade"]["einsums"]):
+                   + flat_nodes(program)):
         written.add(einsum["output_tensor"])
 
     read: list[dict] = []
-    _projections(program["main_edge"]["cascade"]["einsums"], read)
+    _projections(flat_nodes(program), read)
     _projections(program.get("initialization", {}).get("einsums", []), read)
 
     out = set()
@@ -219,7 +221,7 @@ def coord_sets(program: dict) -> dict[str, str]:
     decls = {d["name"]: d for d in program.get("declarations", [])}
     out: dict[str, str] = {}
     for einsum in (program.get("initialization", {}).get("einsums", [])
-                   + program["main_edge"]["cascade"]["einsums"]):
+                   + flat_nodes(program)):
         ranks = [r["name"] for r in
                  decls.get(einsum["output_tensor"], {}).get("ranks", [])]
         for pred in einsum.get("predicates") or []:
@@ -242,10 +244,10 @@ def _all_read(program: dict) -> set[str]:
     check whose first finding is wrong is a check nobody runs twice.
     """
     read: list[dict] = []
-    _projections(program["main_edge"]["cascade"]["einsums"], read)
+    _projections(flat_nodes(program), read)
     _projections(program.get("initialization", {}).get("einsums", []), read)
     names = {p["tensor"] for p in read}
-    for stop in program["main_edge"]["cascade"].get("stopping_conditions", []):
+    for stop in stopping_conditions(program):
         stop_projs: list[dict] = []
         _projections(stop, stop_projs)
         names |= {p["tensor"] for p in stop_projs}
@@ -270,5 +272,5 @@ def unused(program: dict) -> list[str]:
     declared = {d["name"] for d in program.get("declarations", [])}
     written = {e["output_tensor"] for e
                in (program.get("initialization", {}).get("einsums", [])
-                   + program["main_edge"]["cascade"]["einsums"])}
+                   + flat_nodes(program))}
     return sorted(declared - _all_read(program) - written)

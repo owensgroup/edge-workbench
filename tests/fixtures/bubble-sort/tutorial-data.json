@@ -1,0 +1,66 @@
+{
+ "meanings": {
+  "E01": {
+   "text": "On the first pass each step compares the value carried so far with the next element of the input, keeping the smaller on the left and the larger on the right.",
+   "quote": "Each step $j$ carries the already-settled left region forward, compares the\n  running value at position $j$ against the next array element $A_{j+1}$, and\n  writes $\\min$ to position $j$ and $\\max$ to position $j+1$."
+  },
+  "E02": {
+   "text": "A later pass starts from the row the previous pass ended with, sorting its first two positions and copying the rest.",
+   "quote": "Each later pass $i$ instead reads pass $i-1$'s\n  final row"
+  },
+  "E03": {
+   "text": "On later passes the element coming in at each step is the next cell of the previous pass's final row.",
+   "quote": "The incoming element $R$ is $A_{j+1}$ on pass $0$ (still bubbling through the raw\n  input) and $Z_{i-1,\\,J-1,\\,j+1}$ on later passes"
+  },
+  "init": {
+   "text": "The sort starts by putting the first two input values in order.",
+   "quote": "Pass $0$ reads the raw input:\n  $\\min(A_0, A_1)$ lands at position $0$ and $\\max(A_0, A_1)$ at position $1$;"
+  },
+  "stop": {
+   "text": "The passes end when a whole sweep leaves the array unchanged, which means it is sorted.",
+   "quote": "The pass cascade\n  halts when a whole sweep produces no change, i.e. the array is sorted."
+  }
+ },
+ "example": {
+  "kind": "instance",
+  "quote": "Take $A = [3,\\,1,\\,4,\\,2]$, so $N = 4$",
+  "extent": {
+   "N": 4,
+   "M": 4,
+   "I": 3,
+   "J": 3
+  },
+  "scalars": {},
+  "tensors": {
+   "A": {
+    "0": 3,
+    "1": 1,
+    "2": 4,
+    "3": 2
+   }
+  },
+  "expect": {
+   "answer": [
+    1,
+    2,
+    3,
+    4
+   ]
+  }
+ },
+ "tensorNotes": {
+  "A": "the input array",
+  "Z": "the value at each position after each step of each pass"
+ },
+ "view": {
+  "nodeLabels": [
+   {
+    "tensor": "A",
+    "prefix": "",
+    "empty": "·",
+    "place": "above",
+    "color": "#0b7285"
+   }
+  ]
+ }
+}

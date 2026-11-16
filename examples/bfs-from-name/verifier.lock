@@ -1,0 +1,9 @@
+{
+ "_comment": "Written by `python3 -m edge_workbench approve-verifier`. Commit it with verifier.py. A lock edited by hand fails the check.",
+ "verifier_sha256": "726f6831465e513ed0121aefea8e95c6b8e5fc95edcfceb7a2622208914edcf1",
+ "published_answer_sha256": null,
+ "kind": "different-algorithm",
+ "method": "Floyd-Warshall",
+ "approver": "sanjanamali8",
+ "date": "2026-11-16"
+}

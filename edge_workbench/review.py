@@ -172,7 +172,9 @@ def _check_meanings(artifact: dict, program: dict,
                     cascade: dict) -> list[Finding]:
     meanings = prepare.explained(artifact)
     touched = tensors_touched(program, cascade)
-    labels = set(cascade.get("labels") or {})
+    # A multi-output case statement is explained like an Einsum.
+    labels = set(cascade.get("labels") or {}) | set(
+        cascade.get("conditionals") or {})
 
     out: list[Finding] = []
     missing = sorted(labels - set(meanings))

@@ -195,8 +195,9 @@ def answer_problems(directory: Path, stated: bool, answer
     if pinned == now:
         return [], []
     if pinned is None:
-        what = (f"the tutorial's published answer ({answer!r}) was not known "
-                f"when the verifier was approved, so nobody has approved it")
+        what = (f"the tutorial's published answer ({answer!r}) is new since "
+                f"the verifier was approved, so nobody has approved it yet. "
+                f"Approve again now: one run pins it")
     elif now is None:
         what = ("the tutorial published an answer when the verifier was "
                 "approved, and no longer does")
@@ -227,12 +228,34 @@ def _approver(directory: Path) -> str:
     return (name.decode().strip() if name else "") or getpass.getuser()
 
 
-def approve(directory: Path, slug: str, out=None) -> int:
-    """Interactive. Shows what is being approved and writes the lock.
+def approve(directory: Path, slug: str, out=None,
+            confirm: str | None = None, sha: str | None = None) -> int:
+    """Shows what is being approved and writes the lock.
 
-    Refuses without a terminal on both ends: this is the one step that must
-    be a person's, so it cannot be piped, scripted or run by an agent's tool.
+    Two ways for the person to say yes:
+
+    - in a terminal, typing the METHOD (stdin and stdout must be a terminal);
+    - in Claude Code, by allowing the command
+      `approve-verifier <dir> --confirm "<METHOD>" --sha <prefix>`. The
+      project's `.claude/settings.json` makes that command always ask the
+      person first, and forbids the agent to write a lock or the ledger
+      itself; the permission prompt is the approval. `--sha` is the start of
+      the verifier.py hash the person was shown, so a file that changed after
+      they read it is not approved.
     """
+    if confirm is not None:
+        if not sha or len(sha) < 8:
+            print("--confirm needs --sha with at least 8 characters of the "
+                  "verifier.py hash the person was shown.", file=sys.stderr)
+            return 2
+        now = sha256((Path(directory) / "verifier.py").read_bytes())
+        if not now.startswith(sha.lower()):
+            print(f"verifier.py is not the file that was shown (sha {now[:12]}"
+                  f", shown {sha[:12]}). Not approved; show it again.",
+                  file=sys.stderr)
+            return 1
+        return _review(directory, slug, lambda _prompt: confirm,
+                       out or sys.stdout, how="confirmed in Claude Code")
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print("approve-verifier must be run by a person, in a terminal: "
               "standard input and output must both be a terminal.\n"
@@ -241,7 +264,8 @@ def approve(directory: Path, slug: str, out=None) -> int:
     return _review(directory, slug, input, out or sys.stdout)
 
 
-def _review(directory: Path, slug: str, ask, out) -> int:
+def _review(directory: Path, slug: str, ask, out,
+            how: str = "terminal") -> int:
     """Everything after the terminal check. Reached only through `approve`,
     and by the tests, which hand it a temp directory and a throwaway ledger."""
     directory = Path(directory).resolve()
@@ -259,7 +283,7 @@ def _review(directory: Path, slug: str, ask, out) -> int:
     old = read_lock(directory)
     before = _approved_text(old and old.get("verifier_sha256"), directory)
 
-    say(f"Approving {source}")
+    say(f"Approving {source}  (sha {sha256(source.read_bytes())[:12]})")
     say()
     if before is None:
         say("No earlier approved text was found; this is the whole file:")
@@ -335,6 +359,7 @@ def _review(directory: Path, slug: str, ask, out) -> int:
         "method": method,
         "approver": _approver(directory),
         "date": date.today().isoformat(),
+        "how": how,
     }
     lock_bytes = (json.dumps(lock, indent=1, ensure_ascii=False) + "\n").encode()
     (directory / LOCK).write_bytes(lock_bytes)

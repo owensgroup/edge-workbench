@@ -7,7 +7,7 @@ describes, that pass every check once their verifiers are approved:
 python3 -m edge_workbench check examples/maximum-flow              # graph view, max flow 5
 python3 -m edge_workbench check examples/set-cover                 # bipartite view, 2 solutions
 python3 -m edge_workbench check examples/bellman-ford              # graph view
-python3 -m edge_workbench check examples/direction-optimizing-bfs  # graph view, top-down
+python3 -m edge_workbench check examples/direction-optimizing-bfs  # graph view, hybrid: both macros run
 ```
 
 Each writes `index.html` into its directory. Only the inputs are committed;
@@ -68,11 +68,33 @@ Be aware of what is and is not the published material:
   `TPath`, `NewPathEntry`, `Col`, `Row`) and the stack seed `InitS`.
 - Verifier: brute-force subset search (`definition`).
 
-**bellman-ford**, **direction-optimizing-bfs**
-- Tutorials: `edge-algorithms` `main`. Direction-optimizing BFS runs its
-  top-down cascade only; bottom-up and hybrid need macros and `cases`.
-- Verifier: Floyd-Warshall (`different-algorithm`); for BFS, depths on unit
-  edges, compared as depths rather than parents.
+**bellman-ford**
+- Tutorial: `edge-algorithms` `main`.
+- Verifier: Floyd-Warshall (`different-algorithm`).
+
+**direction-optimizing-bfs**
+- Tutorial: `edge-algorithms` `main`, with **one sentence added** to the
+  "Switch thresholds" note: "The walkthrough of the hybrid cascade uses the
+  default values from Beamer et al. (2012), $\alpha = 15$ and $\beta = 18$."
+  The tutorial leaves the thresholds to the user; the defaults are Sanjana's
+  choice. No Einsum is changed.
+- `einsum.edge` transcribes the tutorial's **hybrid** cascade
+  (`- Cascade: Hybrid`) and its two macros, TOP-DOWN and BOTTOM-UP, line for
+  line. It also declares the tensors the hybrid uses without declaring
+  (`Visited`, `NV`, `Nei`, `NeiNV`, `CandTree`, `Temp`, `MF`, `MU`, `NF`,
+  `TB`, `BT`), with types and empty values that are choices, and the two
+  thresholds under `- Constants`.
+- The worked example (five vertices) runs top-down at generation 0, switches
+  (2 frontier edges > 5 / 15), and runs bottom-up for generations 1 to 3.
+  It never switches back, and nothing small can: that needs a frontier
+  smaller than `|V| / 18`.
+- `TMU_i / α` and `|V| / β` are written with no action, so they run with the
+  paper's default pass-through merge (§7.3.4); see
+  `docs/issues-for-edge-core-ir.md`, "For the DO-BFS tutorial".
+- Verifier: Floyd-Warshall (`different-algorithm`), depths on unit edges,
+  compared as depths rather than parents. It is the one approved for the
+  top-down cascade, unchanged: the hybrid ends with the same `Tree`, and the
+  published answer is the same.
 
 The verifiers and the max-flow tutorial data were written by hand while the
 workflow was being built, standing in for an author and a model. Both model

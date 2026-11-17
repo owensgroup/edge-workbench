@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from edge_workbench import spec_check, tensor_facts, verifier  # noqa: E402
+from edge_workbench.cascade_shape import flat_nodes  # noqa: E402
 from edge_workbench.render import action_prose  # noqa: E402
 
 SPECS = sorted(p.parent for p in ROOT.glob("examples/*/workbench/spec/cascade.json"))
@@ -50,7 +51,7 @@ def test_the_prose_names_every_tensor_the_einsum_reads(spec):
     alias = cascade.get("displayNames", {})
     literals = {d["name"] for d in program["declarations"]
                 if not d.get("ranks") and d.get("value") is not None}
-    nodes = program["main_edge"]["cascade"]["einsums"]
+    nodes = flat_nodes(program)
     for label, idx in cascade["labels"].items():
         for k in (idx if isinstance(idx, list) else [idx]):
             for name in _read(nodes[k]["expression"], set()) - literals:

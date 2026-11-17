@@ -136,7 +136,8 @@ def test_einsum_edge_may_name_another_of_the_tutorials_cascades(tmp_path) -> Non
     edge = tmp_path / "einsum.edge"
     edge.write_text("- Cascade: Bottom-Up\n- Tensors\n")
     assert tve.selected_cascade(edge) == "Bottom-Up"
-    assert tve.selected_cascade(DOBFS / "einsum.edge") is None
+    # The example itself transcribes the third one (test_macros.py).
+    assert tve.selected_cascade(DOBFS / "einsum.edge") == "Hybrid"
     # The walkthrough explains the edge_expression cascade, not this one.
     assert tve.authored_meanings(md, edge) == {}
     with pytest.raises(tve.tut.TutorialError, match="Cascades it gives in full"):

@@ -400,6 +400,21 @@ for s in T["steps"]:
     # The labelled parts the run actually steps through, where the written
     # form does not already carry them: shorthand, or a function like sigma.
     s["latexParts"]=_ir if _tex and r"\cdot^" in _ir and r"\cdot^" not in _tex else ""
+    # An Einsum of a macro's body is written in the macro's formal names;
+    # the IR holds what this call expanded it to, which is what the grids
+    # show. A step that chooses the macro says which one, and why.
+    _arm=s.get("arm") or {}
+    s["latexExpanded"]=(_ir if _tex and _arm.get("macro") and not s.get("choice")
+                        and not s["latexParts"] else "")
+    s["macro"]=_arm.get("macro") or ""
+    if s.get("choice"):
+        _c=s["choice"]
+        s["einsumMeaning"]=(
+            f"This generation runs {_c['macro'] or 'arm %d' % (_c['arm']+1)}, "
+            f"arm {_c['arm']+1} of {_c['of']}: "
+            + (f"its condition, {_c['condition']}, holds."
+               if _c["condition"] else "no earlier condition holds.")
+            + " The Einsums of that macro follow; the other arm's do not run.")
     # Definitions the written form uses, e.g. the stamp function sigma.
     s["latexDefs"]=[d for d in WRITTEN.get("definitions",[])
                     if _tex and re.match(r"\\?[A-Za-z]+",d).group(0)+"(" in _tex]
@@ -815,7 +830,8 @@ function render(){
   if(live&&s.latex){
     box.innerHTML='<span class="eid">'+s.einsum+'</span>\\['+s.latex+'\\]'+
       (s.latexDefs||[]).map(d=>'<div class="exsub"><b>where</b> \\('+d+'\\)</div>').join('')+
-      (s.latexParts?'<div class="exsub"><b>step by step</b> \\['+s.latexParts+'\\]</div>':'');
+      (s.latexParts?'<div class="exsub"><b>step by step</b> \\['+s.latexParts+'\\]</div>':'')+
+      (s.latexExpanded?'<div class="exsub"><b>in '+EdgeDisplay.esc(s.macro)+', expanded for this call</b> \\['+s.latexExpanded+'\\]</div>':'');
     MathJax.typesetPromise([box,$('mg'),$('me')]).catch(()=>{box.innerHTML='<span class="eid">'+s.einsum+'</span>'+typeset(s.expr);});
   } else {
     box.innerHTML='<span class="eid">'+s.einsum+'</span>'+typeset(s.expr);

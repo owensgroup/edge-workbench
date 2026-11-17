@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(python3 -m edge_workbench approve-verifier *)"
+    ],
+    "deny": [
+      "Edit(**/verifier.lock)",
+      "Edit(~/.config/edge-workbench/**)",
+      "Bash(*EDGE_WORKBENCH_LEDGER*)",
+      "Bash(*verifier.lock*)",
+      "Bash(*.config/edge-workbench*)"
+    ]
+  }
+}

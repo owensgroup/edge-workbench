@@ -64,6 +64,8 @@ MERGE = {
     "xor": r"\oplus",
     "xnor": r"\equiv",
     "left_only": r"\setminus",
+    # The paper's default merge, written 1: every point, empty or not.
+    "pass_through": r"\mathbf{1}",
 }
 
 COMPUTE = {
@@ -125,8 +127,10 @@ def tensor(name: str) -> str:
         return tensor(name[:-1]) + "^*"
     if name in GREEK:
         return "\\" + name
+    # `Delta` is how the IR must spell the spec's `delta`. An all-capitals
+    # name is a tensor of its own: DO-BFS's `MU` is not the letter mu.
     low = name.lower()
-    if low in GREEK:
+    if low in GREEK and name == low.capitalize():
         return "\\" + low
     if len(name) == 1:
         return name
@@ -415,9 +419,11 @@ class Renderer:
                            (" or ", r" \vee "), (" not in ", r" \notin "),
                            (" in ", r" \in ")):
             text = text.replace(plain, tex)
-        text = re.sub(r"\b(True|False)\b", r"\\text{\1}", text)
+        # A capitalised word is a tensor's name, unless it is a truth value.
         return re.sub(r"\b([A-Z][A-Za-z0-9]+)(?=_|\b)",
-                      lambda m: self.name(m.group(1)), text)
+                      lambda m: (rf"\text{{{m.group(1)}}}"
+                                 if m.group(1) in ("True", "False")
+                                 else self.name(m.group(1))), text)
 
     def cases(self, e: dict, lhs: str) -> str:
         """A case statement, as the paper sets one: an arm per row, each an
@@ -478,6 +484,33 @@ class Renderer:
         if pops:
             return f"{lhs} = {rhs} {self.populate(pops[0])}"
         return f"{lhs} = {rhs}{self.specs(e.get('specs', []))}"
+
+    def conditional(self, entry: dict) -> str:
+        """A conditional cascade, as the multi-output case statement it was
+        written as: the tensors every arm carries to the next generation on
+        the left, one macro per row with its condition.
+
+        The IR keeps each arm's macro NAME and its expanded Einsums, not the
+        call's argument list, so the arguments are shown as an ellipsis; the
+        author's own line, when the page has it, is shown instead.
+        """
+        def heads(arm: dict) -> list[str]:
+            out = []
+            for e in arm.get("einsums", []):
+                first = (e.get("output_ranks") or [{}])[0]
+                if "output_tensor" in e and first.get("kind") == "arith":
+                    out.append(self.einsum({**e, "specs": []}).split(" = ")[0])
+            return out
+
+        arms = entry.get("arms", [])
+        shared = [h for h in (heads(arms[0]) if arms else [])
+                  if all(h in heads(a) for a in arms[1:])]
+        lhs = (shared[0] if len(shared) == 1 else
+               r"\begin{pmatrix}" + r",\, ".join(shared) + r"\end{pmatrix}")
+        rows = [rf"\text{{{_esc(arm.get('macro') or 'cascade')}}}(\cdots) & "
+                + self.condition(arm) for arm in arms]
+        return (f"{lhs} = " + r"\begin{cases} " + r" \\ ".join(rows)
+                + r" \end{cases}")
 
     def arms(self, einsums: list[dict]) -> str:
         """Several IR nodes the author wrote as one Einsum.
@@ -556,6 +589,12 @@ def render_all(program: dict, cascade: dict, alias: dict | None = None) -> dict:
     for label, idx in (cascade.get("labels") or {}).items():
         idxs = idx if isinstance(idx, list) else [idx]
         out[label] = r.arms([nodes[i] for i in idxs])
+
+    from edge_workbench.cascade_shape import conditionals
+    branches = conditionals(program)
+    for label, c in (cascade.get("conditionals") or {}).items():
+        if c["conditional"] < len(branches):
+            out[label] = r.conditional(branches[c["conditional"]])
 
     init = program.get("initialization", {}).get("einsums", [])
     if init:

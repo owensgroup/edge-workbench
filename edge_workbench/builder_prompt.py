@@ -191,17 +191,38 @@ RULES -- each one is checked
    MACROS AND CONDITIONAL CASCADES. A `- Macro NAME(inputs) -> outputs`
    section is a template: build it once as
    `edge_ir.ir.macro.MacroDefinition(name, inputs, outputs, body)`, its body
-   written exactly as the section writes it (formal names and all), and get
-   an invocation's Einsums from `edge_ir.ir.macro.expand(defn, actual_inputs,
-   actual_outputs)`. A multi-output statement
+   written exactly as the section writes it (formal names and all, one
+   Einsum per label, in label order), and get an invocation's Einsums from
+   `edge_ir.ir.macro.expand(defn, actual_inputs, actual_outputs)`. A
+   labelled multi-output statement
      (Out1_{{...}}, Out2_{{...}}) = cases:
          NAME-A(args...)   if <condition>
          NAME-B(args...)   if <condition>
-   is ONE entry of the cascade's `einsums` list:
+   is ONE entry of the cascade's `einsums` list, and no Einsum of its own:
    `ConditionalCascade(arms=[ConditionalArm(when=<condition>,
    einsums=expand(...), macro="NAME-A"), ...])`, arms in the order written.
    A formal parameter the macro body WRITES but its header does not list as
-   an output is still bound by the call (pass it in `inputs`).
+   an output is still bound by the call (pass it in `inputs`). Declare only
+   the ACTUAL tensors (the ones einsum.edge declares); a formal name is
+   never a declaration. An arm must hold exactly the expansion: the check
+   matches each label of the macro's body to the expanded Einsum that
+   writes what the call binds its output to.
+
+   CONSTANTS. A line of the `- Constants` section, `alpha = 15`, is a
+   zero-rank declaration carrying that value, named with a capital
+   (`Alpha`): `TensorDeclaration(name="Alpha", ranks=[], data_type=...,
+   empty_value=None, value=15)`. Read it as `InputTensor`. It is not an
+   input: nothing supplies it.
+
+   AN OPERATION WITH NO ACTION. `TB_i = X_i . (Y_i / alpha) :: /\ >(∩)`
+   writes two operations and one action. The actions after `::` belong to
+   the `.` operations, in order. An operation written with its own glyph
+   inside the expression (`/`, `+`, `-`, `*`) and no action states a compute
+   and no merge: lower it as a labelled Map with that compute and the
+   paper's default merge, `pass_through` ("If a particular operation label
+   does not contain a Merge operator, the EDGE machinery applies the Compute
+   operator to every point in the iteration space", section 7.3.4), and say
+   so in a comment at that Einsum.
 
 7. Reply with each file in its own fenced block whose info string names it:
 

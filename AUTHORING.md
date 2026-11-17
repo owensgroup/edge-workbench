@@ -145,6 +145,42 @@ Rules the checks rely on:
   and the stopping condition that ends it, written with two diamonds:
   `<><> : j == J`. The outer cascade's `<> : ...` comes last. A generational
   rank you give a shape (`I = N-1`) also ends its cascade when it runs out.
+- **A macro** is a section of its own, after the cascade that calls it:
+  `- Macro NAME(inputs) -> outputs`, then its Einsums, labelled like any
+  others and written in the macro's formal names, exactly as the tutorial
+  writes them. The cascade calls macros from a **multi-output case
+  statement**, which is labelled too: the outputs in parentheses, `= cases:`,
+  then one macro call per arm with `if <condition>` or `otherwise`. Each
+  generation runs the first arm whose condition holds.
+
+  ```
+  # E03: one direction per generation
+  (Tree_{i+1, s, d}, F_{i+1, d}, TopDown_{i+1}) = cases:
+      TOP-DOWN(G_{s, d}, F_{i, s}, Tree_{i, s, d}, NV_{i, c}, MF_i, MU_i)   if TopDown_i == True
+      BOTTOM-UP(G_{s, d}, F_{i, s}, Tree_{i, s, d}, NV_{i, c}, NF_i)        if TopDown_i == False
+  <> : ||F_{i+1}|| == 0
+
+  - Macro TOP-DOWN(TG_{s, d}, TF_{i, s}, TTree_{i, s, d}, TNV_{i, c}, TMF_i, TMU_i) -> TTree_{i+1, s, d}, TF_{i+1, d}, TTopDown_{i+1}
+  # E04: gather neighbors of the frontier
+  Nei_{i, d} = TG_{s, d} . TF_{i, s} :: /\ AND(∩) \/ OR(∪)
+  ...
+  ```
+
+  A call binds each formal tensor to the actual one in the same position,
+  inputs then outputs, and the page shows each Einsum of the body both as
+  written and as that call expands it. Declare the actual tensors only
+  (`Tree`, never `TTree`), including any the macro writes that the tutorial
+  does not declare. The tutorial's `MACRO` blocks are compared with these
+  sections line by line, header included.
+- **A constant** the cascade reads by name and the tutorial gives no
+  declaration for (a threshold) goes under `- Constants`, one `name = value`
+  per line (`alpha = 15`). It is part of the program, not an input, so no
+  instance supplies it; the tutorial has to state the value somewhere
+  (`$\alpha = 15$`), or `check` says so.
+- **An operation with no action**, as in `TB_i = MF_i . (MU_i / alpha) ::
+  /\ >(∩)`, states a compute and no merge. It runs with the paper's default
+  merge, pass-through: the compute is applied whether or not the operands
+  are empty. Write the action if you mean another merge.
 - **A tutorial with several cascades** gets one directory per cascade, each
   with its own `einsum.edge` and page. `einsum.edge` transcribes
   `edge_expression` unless it says otherwise with a line such as
@@ -328,7 +364,7 @@ index.html written: index.html
 | builder / program | the model's builder does not match `einsum.edge`; paste the rewritten prompt |
 | tutorial data | a meaning or the example does not quote your tutorial, or the example's inputs are wrong |
 | instance | the worked example, or a random instance, does not supply what the program reads; or the published answer is not the approved one |
-| page — coverage | an Einsum never executed; or an arm of a case statement (or of a conditional cascade) is reached by neither the worked example nor any random instance. An arm only the random instances reach is named on the line and noted on the page. |
+| page — coverage | an Einsum never executed; or an arm of a case statement (or a macro of a multi-output case statement) is reached by neither the worked example nor any random instance. An arm only the random instances reach is named on the line and noted on the page. |
 | page — answer check | **your cascade gives a different answer from your verifier** — on your worked example, on the answer your tutorial publishes, or on a random instance. The line reads `random instances: k/12 agree`; rerun a failing one alone with `verify-instance`. |
 
 The answer check is the one that finds mistakes in a specification. Exact
@@ -361,8 +397,8 @@ evaluator during `check`; the page only displays that run.
 ## Not supported yet
 
 - tensors with more than two non-generational ranks in the picture
-- macros in `einsum.edge` (`MACRO NAME(...)` sections and a case statement
-  choosing between them, as in DO-BFS hybrid); the evaluator can run them
+- a macro used inline, as an anonymous tensor inside an Einsum, or called
+  outside a multi-output case statement
 - for an inner cascade the page shows every Einsum at every generation of
   both cascades, exactly as written: a range given only in a remark
   (`▷ Pass 0, step j (j ≥ 1)`) is not a restriction

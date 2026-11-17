@@ -78,6 +78,7 @@ const EdgeDisplay = (function () {
       .replace(/\\_/g, UNDERSCORE)
       .replace(/\\(lvert|lVert)\s+/g, "\\$1{}")
       .replace(/\\begin\{(?:cases|array|aligned)\}(?:\{[^}]*\})?/g, " ")
+      .replace(/\\begin\{pmatrix\}/g, "(").replace(/\\end\{pmatrix\}/g, ")")
       .replace(/\\end\{(?:cases|array|aligned)\}/g, " ")
       .replace(/\\\\(\[[^\]]*\])?/g, "\n")
       .replace(/\\(?:left|right|textstyle|nolimits|displaystyle)\b/g, "")

@@ -18,6 +18,13 @@
   condition holds claims a point (issue 8). A conditional cascade runs one
   arm's Einsums per generation (issue 9). IR nodes are numbered depth first
   through arms and inner cascades (`cascade_shape.flat_nodes`).
+- A macro is a lexical substitution (paper B.8). `einsum.edge` writes it as
+  a `- Macro NAME(inputs) -> outputs` section in formal names; the IR holds
+  each call's expansion (`edge_ir.ir.macro.expand`). A labelled multi-output
+  case statement over macro calls is one conditional cascade, has no IR node
+  and no entry in `labels` (it is in cascade.json's `conditionals`), and the
+  driver emits a step for it saying which macro the generation ran. The
+  label map follows a call's bindings (`spec_surface.expansion_order`).
 - Captions: the author's `**Graph meaning:**` / `**Einsum meaning:**` lines
   under each formula in `edge_expression_walkthrough` win; then the model's
   text; then a sentence generated from the IR (`render/action_prose.py`).
@@ -57,6 +64,13 @@
   of a case statement or of a conditional cascade must be exercised by the
   worked example or by one of the verifier's random instances.
 - A function-call arm (`min(x, y)`) states no merge; builders use intersect.
+- An operation written with its own glyph and no action (`(MU_i / alpha)`)
+  states no merge; builders use the paper's default, `pass_through` (§7.3.4).
+- A `- Constants` value (`alpha = 15`) is a zero-rank declaration carrying
+  the value, never an input: an input must come from every instance, the
+  approved verifier's random ones included. The tutorial must state it.
+- A tutorial may define a macro twice under one name (DO-BFS: hybrid and
+  compact hybrid); the reader takes the blocks after the selected cascade.
 - `j-1` in a subscript is rank arithmetic, not a hyphenated operator name.
 - Coordinates start at 0; a tutorial numbering vertices from 1 shows an
   unused vertex 0 on the page.

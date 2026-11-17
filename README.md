@@ -36,23 +36,31 @@ it; only the parts marked **you** need a person.
    (`definition`, `library`, `certificate`, `different-algorithm`,
    `user-reference`); you pick one. It drafts `verifier.py` only for a
    library check or a wrapper around your own code, or if you ask it to.
-3. **Approve** (**you**, checkpoint C), in your own terminal:
-   ```
-   python3 -m edge_workbench approve-verifier examples/<slug>
-   ```
-   This pins `verifier.py` and, once it is known, the tutorial's published
-   answer in `verifier.lock`. Commit both. No agent can approve.
-4. **Check** (agent):
+3. **Check** (agent):
    ```
    python3 -m edge_workbench check examples/<slug>
    ```
    Every stage lists all its problems, then stops. The builder and
    tutorial-data steps write a prompt; the agent answers it in the same
    session (or you paste it into a chat) and the reply is checked like
-   anything else. A new tutorial's first published answer needs one more
-   `approve-verifier`. Anything about the cascade, the example or the answer
-   comes back to you with evidence. When every stage passes, `index.html` is
-   written beside your files.
+   anything else. Anything about the cascade, the example or the answer comes
+   back to you with evidence. A verifier that has never been approved does
+   not stop the run: `check` carries on and ends with `… approval`.
+4. **Approve** (**you**, checkpoint C), once, when `check` asks. Either:
+   - **in Claude Code:** the agent shows you the whole `verifier.py`, its sha
+     and the published answer, then runs
+     `approve-verifier examples/<slug> --confirm "<METHOD>" --sha <sha>`.
+     `.claude/settings.json` makes that command always ask you first:
+     clicking allow is your approval. The same settings forbid the agent to
+     write `verifier.lock` or the approvals file itself. If `verifier.py`
+     changed after you were shown it, the command refuses.
+   - **in your own terminal:** `python3 -m edge_workbench approve-verifier examples/<slug>`,
+     typing the METHOD when asked.
+
+   This pins `verifier.py` and the tutorial's published answer together in
+   `verifier.lock` (which records how it was approved). Commit both, run
+   `check` again, and `index.html` is written. A verifier or answer that
+   changes after approval stops `check` until you approve again.
 5. **Look**: open `examples/<slug>/index.html`.
 6. **Publish** (agent or you):
    ```

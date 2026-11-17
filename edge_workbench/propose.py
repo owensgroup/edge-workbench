@@ -129,6 +129,13 @@ def build_prompt(tutorial: Path, artifact: dict, program: dict | None = None,
             f"  {label}: writes/reads {', '.join(sorted(names))}"
             for label, names in sorted(touched.items())
         ]
+        # A multi-output case statement runs one macro per generation.
+        lines += [
+            f"  {label}: runs one of the macros {', '.join(c['macros'])} "
+            f"each generation (their Einsums are labelled separately)"
+            for label, c in sorted((cascade.get("conditionals") or {}).items())
+        ]
+        lines.sort()
         facts_block = (
             "\nWHAT THE PROGRAM ALREADY SAYS (do not restate this; it is\n"
             "generated separately, and a meaning that repeats it is wasted):\n"

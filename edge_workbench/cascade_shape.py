@@ -105,6 +105,26 @@ def inner_cascades(program: dict) -> list[dict]:
     return out
 
 
+def conditionals(program: dict) -> list[dict]:
+    """Every conditional cascade, depth first, numbered as `placement`
+    numbers them."""
+    out: list[dict] = []
+
+    def walk(entries: list) -> None:
+        for entry in entries:
+            if _is_einsum(entry):
+                continue
+            if entry.get("kind") == "conditional":
+                out.append(entry)
+                for arm in entry.get("arms", []):
+                    walk(arm.get("einsums", []))
+            else:
+                walk(entry.get("einsums", []))
+
+    walk(body(program))
+    return out
+
+
 def stopping_conditions(program: dict) -> list[dict]:
     """Every diamond: the outer cascade's first, then each inner cascade's."""
     top = program["main_edge"]["cascade"]

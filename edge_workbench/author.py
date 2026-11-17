@@ -167,6 +167,9 @@ class Stage:
     summary: str = ""
     findings: list[str] = field(default_factory=list)
     next: list[str] = field(default_factory=list)
+    #: Problems held back until later in the run (the verifier's approval,
+    #: asked for once, at the end, so it covers the published answer too).
+    deferred: list[str] = field(default_factory=list)
 
 
 MARK = {"ok": "✓", "fail": "✗", "waiting": "…", "skipped": "-"}
@@ -205,8 +208,26 @@ def stage_inputs(a: Author, committed_only: bool = False) -> Stage:
         # its contract, and has a person approved exactly this text?
         s.findings += verifier.contract_problems(a.verifier, a.slug)
         unapproved, todo = approval.problems(a.dir, committed_only)
-        s.findings += unapproved
-        s.next += todo
+        if s.findings:
+            s.findings += unapproved
+            s.next += todo
+        elif unapproved and not (a.dir / approval.LOCK).exists():
+            # The verifier meets its contract and has never been approved
+            # (a lock that is forged, or a verifier changed since approval,
+            # still stops here at once: that is the case to be loud about).
+            # Nothing
+            # before the instance stage runs it, so carry on: the author is
+            # asked to approve once, at the end, when the tutorial's
+            # published answer is known and can be pinned in the same lock.
+            s.state = "waiting"
+            s.deferred = unapproved
+            s.summary = ("verifier.py meets its contract; approval is asked "
+                         "for once, at the end, so it covers the published "
+                         "answer too")
+            return s
+        else:
+            s.findings += unapproved
+            s.next += todo
     s.state = "fail" if s.findings else "ok"
     said = verifier.declared(a.verifier) if a.verifier.exists() else {}
     s.summary = (f"{a.tutorial.name}, einsum.edge, verifier.py "
@@ -361,6 +382,12 @@ def derive_cascade(a: Author, program: dict) -> tuple[dict, list[str]]:
         **({"rankKinds": kinds} if (kinds := rank_kinds.read(a.tutorial))
            else {}),
         "labels": labels,
+        # Multi-output case statements over macros: each is a conditional
+        # cascade in the IR, not an Einsum, so it has no entry in `labels`.
+        **({"conditionals": {c.label: {"conditional": k,
+                                       "macros": [arm.macro for arm in c.arms]}
+                             for k, c in enumerate(surface.conditionals)}}
+           if surface.conditionals else {}),
         "selectors": {n: (n if n in RANKED else {"rule": "seeded", "seed": 0})
                       for n in free},
     }, problems
@@ -396,6 +423,9 @@ def stage_program(a: Author) -> tuple[Stage, dict | None, dict | None]:
             problems += spec_check.spec_versus_ir(
                 parse_edge_file(a.edge), parse_declarations(a.edge),
                 program, cascade)
+        from edge_workbench.spec_surface import parse_constants
+        problems += spec_check.constants_versus_ir(
+            parse_constants(a.edge), program)
 
     s.findings = problems
     if problems:
@@ -472,7 +502,9 @@ def stage_tutorial_data(a: Author, program: dict, cascade: dict) -> tuple[Stage,
             return s, None
     artifact = prepare.load(a.spec)
     reply = a.replies / "tutorial-data.json"
-    labels = sorted(cascade.get("labels") or {})
+    # A multi-output case statement is explained like an Einsum.
+    labels = sorted(set(cascade.get("labels") or {})
+                    | set(cascade.get("conditionals") or {}))
 
     # The author's own meanings are read on every run, so an edit to the
     # tutorial reaches the page with no model step.
@@ -869,6 +901,11 @@ def check(directory: Path, tutorial: Path | None = None,
 
     inst_stage = stage_instance(a, artifact, program, cascade)
     stages.append(inst_stage)
+    if inputs.state == "waiting":
+        stages.append(stage_approval(a, inputs, artifact,
+                                     failing=any(s.state == "fail"
+                                                 for s in stages)))
+        return _finish(a, stages, stale)
     if any(s.state == "fail" for s in stages):
         stages.append(Stage("page", "skipped",
                             "not built while a check above is failing"))
@@ -877,6 +914,30 @@ def check(directory: Path, tutorial: Path | None = None,
     page, wrote = stage_page(a)
     stages.append(page)
     return _finish(a, stages, stale, wrote)
+
+
+def stage_approval(a: Author, inputs: Stage, artifact: dict,
+                   failing: bool) -> Stage:
+    """The one approval a new or changed verifier needs, asked for last.
+
+    Everything that does not depend on the verifier has run, so the
+    tutorial's published answer is known and `approve-verifier` pins both in
+    one lock. If another stage is failing, fixing it may change the answer,
+    so that comes first.
+    """
+    s = Stage("approval", "waiting" if not failing else "skipped")
+    answer = ((artifact.get("example") or {}).get("expect") or {}).get("answer")
+    if failing:
+        s.summary = ("waits until the stages above pass: fixing them may "
+                     "change the published answer")
+        return s
+    s.summary = "needs one approval: the verifier and the published answer"
+    s.findings = inputs.deferred + [
+        f"Approving now covers verifier.py ({verifier.declared(a.verifier).get('KIND')}: "
+        f"{verifier.declared(a.verifier).get('METHOD')}) and the tutorial's "
+        f"published answer {answer!r} together."]
+    s.next = approval._next(a.dir)
+    return s
 
 
 def _finish(a: Author, stages: list[Stage], stale: Path, wrote=False) -> int:
@@ -909,6 +970,12 @@ def main(argv: list[str] | None = None) -> int:
                             "interactive, needs a terminal")
     v.add_argument("dir", type=Path)
     v.add_argument("--tutorial", type=Path, default=None)
+    v.add_argument("--confirm", default=None, metavar="METHOD",
+                   help="approve without a terminal: the METHOD, as allowed "
+                        "by the person at Claude Code's permission prompt")
+    v.add_argument("--sha", default=None,
+                   help="with --confirm: the start of the verifier.py hash "
+                        "the person was shown")
     k = sub.add_parser("verify-instance",
                        help="rerun one random instance of the answer check "
                             "and print it")
@@ -933,7 +1000,8 @@ def main(argv: list[str] | None = None) -> int:
                                args.with_tutorial, args.committed_only)
     if args.cmd == "approve-verifier":
         a = locate(args.dir, args.tutorial)
-        return approval.approve(a.dir, a.slug)
+        return approval.approve(a.dir, a.slug, confirm=args.confirm,
+                                sha=args.sha)
     if args.cmd == "verify-instance":
         a = locate(args.dir, args.tutorial)
         if not (a.spec / "instance.json").exists():

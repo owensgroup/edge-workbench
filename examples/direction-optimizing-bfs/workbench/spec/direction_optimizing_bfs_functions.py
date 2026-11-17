@@ -13,7 +13,7 @@ def direction_optimizing_bfs_registry() -> FunctionRegistry:
     registry.register(
         UdfDecl(name="pick-parent", category=UdfCategory.COORDINATE,
                 arity=decl.arity, wants_context=decl.wants_context,
-                doc="E06 coordinate op: keep one parent per child, any one."),
+                doc="E07, E16 coordinate op: keep one parent per child, any one."),
         registry.impl(UdfCategory.COORDINATE, "select-any"),
     )
     return registry

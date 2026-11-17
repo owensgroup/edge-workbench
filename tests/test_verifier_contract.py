@@ -284,7 +284,7 @@ def test_an_answer_first_published_after_approval_needs_approval(tmp_path, ledge
     d = _dir(tmp_path)
     approve_in_tmp(d, ledger)
     found, _ = approval.answer_problems(d, True, 5)
-    assert "was not known when the verifier was approved" in found[0]
+    assert "is new since the verifier was approved" in found[0]
 
 
 def _git(d: Path, *args: str) -> None:
@@ -381,6 +381,19 @@ def test_check_stops_at_inputs_when_the_verifier_was_edited(tmp_path, ledger, ca
     assert not (d / "index.html").exists()
 
 
+def test_a_never_approved_verifier_is_asked_for_once_at_the_end(
+        tmp_path, ledger, capsys):
+    d = _example(tmp_path, ledger)
+    (d / approval.LOCK).unlink()
+    assert author.main(["check", str(d)]) != 0
+    out = capsys.readouterr().out
+    assert "… inputs" in out and "… approval" in out
+    assert "✓ instance" in out
+    assert "covers verifier.py" in out and "published answer" in out
+    assert f"approve-verifier {d}" in out
+    assert not (d / "index.html").exists()
+
+
 def test_check_stops_at_instance_when_the_published_answer_changed(
         tmp_path, ledger, capsys):
     d = _example(tmp_path, ledger)
@@ -393,3 +406,26 @@ def test_check_stops_at_instance_when_the_published_answer_changed(
     assert "✓ inputs" in out and "✗ instance" in out
     assert "published answer has changed since the verifier was approved" in out
     assert "An AI agent must stop here" in out
+
+
+# ------------------------------------------------- in-session approval ---
+
+def test_confirm_needs_the_sha_of_the_file_that_was_shown(tmp_path, ledger,
+                                                         capsys):
+    d = _dir(tmp_path)
+    assert approval.approve(d, "toy", confirm="direct sum",
+                            sha="0" * 12) == 1
+    assert "not the file that was shown" in capsys.readouterr().err
+    assert not (d / approval.LOCK).exists()
+    assert approval.approve(d, "toy", confirm="direct sum", sha="abc") == 2
+
+
+def test_confirm_with_the_right_sha_and_method_approves(tmp_path, ledger):
+    d = _dir(tmp_path)
+    sha = approval.sha256((d / "verifier.py").read_bytes())
+    assert approval.approve(d, "toy", confirm="wrong method", sha=sha) == 1
+    assert not (d / approval.LOCK).exists()
+    assert approval.approve(d, "toy", confirm="direct sum", sha=sha[:12]) == 0
+    lock = json.loads((d / approval.LOCK).read_text())
+    assert lock["how"] == "confirmed in Claude Code"
+    assert approval.problems(d) == ([], [])

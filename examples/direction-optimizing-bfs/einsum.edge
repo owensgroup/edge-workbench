@@ -1,41 +1,104 @@
-# Direction-Optimizing BFS, top-down -- ASCII surface form of the tutorial's
-# edge_expression, transcribed line for line.
+# Direction-Optimizing BFS, hybrid -- ASCII surface form of the tutorial's
+# "Hybrid (Direction-Optimizing)" cascade and its two macros, transcribed
+# line for line.
+
+- Cascade: Hybrid
 
 - Tensors
-G^{S = |V|, D = |V|}        -> Boolean, empty = False
-F^{I, S = |V|}              -> Boolean, empty = False
-Tree^{I, S = |V|, D = |V|}  -> Boolean, empty = False
+G^{S = |V|, D = |V|}             -> Boolean, empty = False
+F^{I, S = |V|}                   -> Boolean, empty = False
+Tree^{I, S = |V|, D = |V|}       -> Boolean, empty = False
+CandParents^{I, S = |V|, D = |V|} -> Boolean, empty = False
+InF^{I, S = |V|, D = |V|}        -> Boolean, empty = False
+TopDown^{I}                      -> Boolean, empty = False
 
-# NOT declared in the tutorial. Used by the cascade below, so they are declared
-# here; the empty values are choices, not the tutorial's.
-Nei^{I, D = |V|}                -> Boolean, empty = False
-Visited^{I, D = |V|}            -> Boolean, empty = False
-NV^{I, D = |V|}                 -> Boolean, empty = False
-NeiNV^{I, D = |V|}              -> Boolean, empty = False
-CandTree^{I, S = |V|, D = |V|}  -> Boolean, empty = False
-Temp^{I, S = |V|, D = |V|}      -> Boolean, empty = False
+# NOT declared in the tutorial. Used by the cascade and its macros, so they
+# are declared here; the types and empty values are choices, not the
+# tutorial's. MF, MU and NF are counts (a `+` reduce over Booleans), so they
+# are integers whose empty value is the sum of nothing; TB and BT are the
+# results of comparisons.
+Visited^{I, D = |V|}             -> Boolean, empty = False
+NV^{I, D = |V|}                  -> Boolean, empty = False
+Nei^{I, D = |V|}                 -> Boolean, empty = False
+NeiNV^{I, D = |V|}               -> Boolean, empty = False
+CandTree^{I, S = |V|, D = |V|}   -> Boolean, empty = False
+Temp^{I, S = |V|, D = |V|}       -> Boolean, empty = False
+MF^{I}                           -> integer, empty = 0
+MU^{I}                           -> integer, empty = 0
+NF^{I}                           -> integer, empty = 0
+TB^{I}                           -> Boolean, empty = False
+BT^{I}                           -> Boolean, empty = False
+
+# The switching thresholds. The tutorial's cascade reads alpha and beta and
+# leaves their values to the user; these are the defaults of Beamer et al.
+# (2012), stated in the tutorial's "Switch thresholds" note.
+- Constants
+alpha = 15
+beta = 18
 
 - Initializations        # n = source vertex
 F_{i, s} = False
 Tree_{i, s, d} = False
+CandParents_{i, s, d} = False
+InF_{i, s, d} = False
 F_{0, n} = True
 Tree_{0, n, n} = True
+TopDown_0 = True
 
 - Extended Einsums
-# E01: gather neighbors of the frontier
-Nei_{i, d} = G_{s, d} . F_{i, s} :: /\_s AND(∩) \/_s OR(∪)
-# E02: find visited vertices from the tree
-Visited_{i, c} = Tree_{i, p, c} :: \/_p OR(∪)
-# E03: the vertices that are not visited
+# E01: find visited vertices from the tree
+Visited_{i, c} = Tree_{i, p, c} :: \/ OR(∪)
+# E02: the vertices that are not visited
 NV_{i, c} = not Visited_{i, c}
-# E04: keep neighbors that are not yet visited
-NeiNV_{i, d} = Nei_{i, d} . NV_{i, d} :: /\_d AND(∩)
-# E05: record candidate parent-child edges
-CandTree_{i, s, d} = (G_{s, d} . F_{i, s})_{i, s, d} . NeiNV_{i, d} :: /\ AND(∩) /\ AND(∩)
-# E06: select exactly one parent per child
-Temp_{i, s*, d} = CandTree_{i, s, d} :: <<<_{s*} 1(pick-parent)
-# E07: update the BFS tree
-Tree_{i+1, s, d} = Tree_{i, s, d} . Temp_{i, s, d} :: /\_d OR(∪)
-# E08: set the next frontier
-F_{i+1, d} = NeiNV_{i, d}
+# E03: run the macro for this generation's direction
+(Tree_{i+1, s, d}, F_{i+1, d}, TopDown_{i+1}) = cases:
+    TOP-DOWN(G_{s, d}, F_{i, s}, Tree_{i, s, d}, NV_{i, c}, MF_i, MU_i)   if TopDown_i == True
+    BOTTOM-UP(G_{s, d}, F_{i, s}, Tree_{i, s, d}, NV_{i, c}, NF_i)        if TopDown_i == False
 <> : ||F_{i+1}|| == 0
+
+- Macro TOP-DOWN(TG_{s, d}, TF_{i, s}, TTree_{i, s, d}, TNV_{i, c}, TMF_i, TMU_i) -> TTree_{i+1, s, d}, TF_{i+1, d}, TTopDown_{i+1}
+# E04: gather neighbors of the frontier
+Nei_{i, d} = TG_{s, d} . TF_{i, s} :: /\ AND(∩) \/ OR(∪)
+# E05: keep neighbors that are not yet visited
+NeiNV_{i, d} = Nei_{i, d} . TNV_{i, d} :: /\ AND(∩)
+# E06: record candidate parent-child edges
+CandTree_{i, s, d} = (TG_{s, d} . TF_{i, s})_{i, s, d} . NeiNV_{i, d} :: /\ AND(∩) /\ AND(∩)
+# E07: select exactly one parent per child
+Temp_{i, s*, d} = CandTree_{i, s, d} :: <<<_{s*} 1(pick-parent)
+# E08: update the BFS tree
+TTree_{i+1, s, d} = TTree_{i, s, d} . Temp_{i, s, d} :: /\ OR(∪)
+# E09: set the next frontier
+TF_{i+1, d} = NeiNV_{i, d}
+# E10: top-down work, the frontier's total degree
+TMF_i = TG_{s, d} . TF_{i, s} :: /\ AND(∩) \/ +(∪)
+# E11: bottom-up work, the Not Visited vertices' total degree
+TMU_i = TG_{s, d} . TNV_{i, d} :: /\ AND(∩) \/ +(∪)
+# E12: switch to bottom-up?
+#      The tutorial writes one action, `/\ >(∩)`, for two operations: it is
+#      the comparison's. The division `TMU_i / alpha` has no action written,
+#      so no merge: per the paper (7.3.4), "If a particular operation label
+#      does not contain a Merge operator, the EDGE machinery applies the
+#      Compute operator to every point in the iteration space (default
+#      pass-through Merge)". The builder lowers `/` with pass-through.
+TB_i = TMF_i . (TMU_i / alpha) :: /\ >(∩)
+# E13: the next direction
+TTopDown_{i+1} = not TB_i
+
+- Macro BOTTOM-UP(TG_{s, d}, TF_{i, s}, TTree_{i, s, d}, TNV_{i, c}, TNF_i) -> TTree_{i+1, s, d}, TF_{i+1, d}, TTopDown_{i+1}
+# E14: candidate parents of Not Visited vertices
+CandParents_{i, s, d} = TG_{s, d} . TNV_{i, d} :: /\ AND(∩)
+# E15: candidate parents that are in the frontier
+InF_{i, s, d} = CandParents_{i, s, d} . TF_{i, s} :: /\ AND(∩)
+# E16: select exactly one parent per child
+Temp_{i, s*, d} = InF_{i, s, d} :: <<<_{s*} 1(pick-parent)
+# E17: update the BFS tree
+TTree_{i+1, s, d} = Temp_{i, s, d} . TTree_{i, s, d} :: /\ OR(∪)
+# E18: set the next frontier
+TF_{i+1, d} = InF_{i, s, d} :: \/ OR(∪)
+# E19: the frontier's size
+TNF_i = TF_{i, s} :: \/ +(∪)
+# E20: switch back to top-down?
+#      As in E12: `|V| / beta` has no action written, so pass-through.
+BT_i = TNF_i . (|V| / beta) :: /\ <(∩)
+# E21: the next direction
+TTopDown_{i+1} = BT_i

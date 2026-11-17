@@ -115,6 +115,18 @@ def stateful(program: dict, gen_rank: str = "I",
             if first_read.get("kind") == "var":
                 read_current.add(tensor)
 
+    # The condition of a conditional cascade's arm reads state too:
+    # `TopDown_i == True` reads what the previous generation's macro wrote.
+    from edge_workbench.cascade_shape import conditionals
+    for entry in conditionals(program):
+        for arm in entry.get("arms", []):
+            for m in re.finditer(
+                    r'"tensor":\s*"([A-Za-z_][A-Za-z0-9_]*)",\s*"ranks":\s*'
+                    r'\[\s*\{[^{}]*"kind":\s*"var"',
+                    _json.dumps(arm.get("when"))):
+                if gen_rank in declared.get(m.group(1), []):
+                    read_current.add(m.group(1))
+
     carried = {
         t for t in advanced
         if t in read_current and t not in at_current
@@ -256,6 +268,14 @@ def _all_read(program: dict) -> set[str]:
         for m in re.finditer(r'"tensor":\s*"([A-Za-z_][A-Za-z0-9_]*)"',
                              _json.dumps(stop)):
             names.add(m.group(1))
+    # A conditional cascade's arms are chosen by conditions that read tensors
+    # too (`TopDown_i == False` reads the literal False).
+    from edge_workbench.cascade_shape import conditionals
+    for entry in conditionals(program):
+        for arm in entry.get("arms", []):
+            for m in re.finditer(r'"tensor":\s*"([A-Za-z_][A-Za-z0-9_]*)"',
+                                 _json.dumps(arm.get("when"))):
+                names.add(m.group(1))
     return names
 
 

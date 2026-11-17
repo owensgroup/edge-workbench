@@ -48,7 +48,8 @@ only at the start.
 
 - The `check` pipeline above, with every model step paste-based (no API in CI).
 - Four algorithms passing end to end: max-flow, set-cover, Bellman-Ford,
-  direction-optimizing BFS (top-down). Bubble sort (case statements in a
+  direction-optimizing BFS (hybrid: two macros and a conditional cascade,
+  both directions on the worked example). Bubble sort (case statements in a
   nested cascade) and DO-BFS bottom-up pass from scratch directories; bubble
   sort is a test fixture, not an example, until its verifier is approved.
 - The page: per-Einsum drill-down, After Map / After Reduce grids, a
@@ -96,6 +97,8 @@ only at the start.
 | 33 | `cases`, conditional cascades with macro expansion, and inner cascades are local patches to edge-core-ir (issues 8, 9, 10): a case statement is one IR Einsum with arms, a conditional cascade one cascade entry, IR nodes numbered depth first | Bubble sort and DO-BFS could not run; lowering a case statement to one Einsum per arm wrote a slice several times and lost the conditions | Sanjana (patch locally); Claude (design) |
 | 34 | An arm of a case statement or of a conditional cascade must be exercised by the worked example or by one of the verifier's random instances; one the example never reaches is named on the coverage line and the page | The author's example is small and not ours to change, but an arm nothing runs is unchecked specification | Claude |
 | 35 | One author directory, and one page, per cascade; `einsum.edge` names a cascade other than `edge_expression` with `- Cascade: <name>` | A tutorial may give several cascades (DO-BFS has three) and a page replays one run | Claude; open question for Sanjana |
+| 36 | A macro is a section of `einsum.edge` in formal names and a multi-output case statement is a labelled statement with no IR node; the label map follows each call's bindings; a constant the cascade reads (`- Constants`) is part of the program and must be stated by the tutorial; an operation written with no action runs with the paper's default pass-through merge | The DO-BFS page should show the hybrid, written as the tutorial writes it. Thresholds as inputs would have needed the approved verifier's instances to supply them. §7.3.4 says what an unwritten merge means, so nothing is invented | Sanjana (hybrid only; α = 15, β = 18); Claude (syntax, constants, merge reading) |
+| 36 | One approval per new verifier, asked for at the end of `check`, covering the verifier and the published answer; approval may also be given in Claude Code: the agent shows the whole file and its sha, runs `approve-verifier --confirm METHOD --sha`, and `.claude/settings.json` forces a permission prompt for it and denies the agent writing the lock, the ledger or `EDGE_WORKBENCH_LEDGER` | Two approvals per tutorial confused the author; a terminal-only step broke the flow. The person's click stays the approval, the sha binds it to the file they read, and the lock records how it was given | Sanjana; mechanism Claude |
 
 ## What worked
 
@@ -142,11 +145,12 @@ only at the start.
 
 - Toluwa's parser, to replace the model-written builder.
 - Decisions on the edge-core-ir issues; getting the local patches upstream.
-- DO-BFS hybrid: macros in `einsum.edge`, and the tutorial's missing α, β and
-  declarations (issues file, "For the DO-BFS tutorial").
+- DO-BFS hybrid: the questions left for the tutorial (issues file, "For the
+  DO-BFS tutorial"): the merge of the unwritten division, and a switch back
+  to top-down that no small graph can take.
 - Whether a remark such as `(j ≥ 1)` over an Einsum should restrict it
   (issue 10, question 2).
-- Choosing which steps to show on long pages (DOBFS has 34).
+- Choosing which steps to show on long pages (DOBFS hybrid has 48).
 - A non-graph algorithm, to test the sequence view.
 - Rewriting the skill for AI-drafted specs.
 - A set of AI-written specs with a count of which errors each check catches.

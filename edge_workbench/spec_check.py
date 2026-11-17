@@ -125,11 +125,14 @@ def _surface_key(text: str):
     return _RankKey(_OPAQUE, t, 0)
 
 
-def spec_write_sites(edge: Path) -> list[tuple[str, str, tuple]]:
-    """(where, tensor, rank keys) for every write einsum.edge makes.
+def spec_write_sites(edge: Path) -> list[tuple]:
+    """(where, tensor, rank keys, arm) for every write einsum.edge makes.
 
     Initialization lines first, then each labelled Einsum once -- a `cases`
-    statement is ONE write, however many IR nodes it lowers to.
+    statement is ONE write, however many IR nodes it lowers to. An Einsum in
+    a macro's body writes what each call binds it to, and `arm` says which
+    arm of which multi-output case statement that call is: (statement label,
+    arm number). Elsewhere `arm` is None.
     """
     from edge_workbench import spec_surface as ss
     from edge_workbench.tutorial_vs_edge import read_edge
@@ -145,10 +148,25 @@ def spec_write_sites(edge: Path) -> list[tuple[str, str, tuple]]:
                 continue
             ranks = ss._split_ranks(m.group(2), m.group(3))
             sites.append((f"initialization line {k + 1}", m.group(1),
-                          tuple(_surface_key(r) for r in ranks)))
-    for label, e in sorted(ss.parse_edge_file(edge).items()):
+                          tuple(_surface_key(r) for r in ranks), None))
+    surface = ss.parse_edge_file(edge)
+    for label, e in sorted(surface.items()):
+        if e.macro:
+            continue                       # through its macro's calls, below
         sites.append((label, e.output,
-                      tuple(_surface_key(r) for r in e.output_ranks)))
+                      tuple(_surface_key(r) for r in e.output_ranks), None))
+    for stmt in surface.conditionals:
+        for k, call in enumerate(stmt.arms):
+            macro = surface.macros.get(call.macro)
+            if macro is None:
+                continue
+            tensors, ranks = ss.call_bindings(macro, call, stmt.outputs)
+            for label in macro.labels:
+                e = surface[label]
+                sites.append((label, tensors.get(e.output, e.output),
+                              tuple(_surface_key(ranks.get(r.replace(" ", ""), r))
+                                    for r in e.output_ranks),
+                              (stmt.label, k)))
     return sites
 
 
@@ -156,10 +174,12 @@ def _overlaps(sites, iteration) -> dict[str, list[str]]:
     from edge_ir.validator.single_assignment import _can_meet
 
     out: dict[str, list[str]] = {}
-    for n, (w1, t1, r1) in enumerate(sites):
-        for w2, t2, r2 in sites[n + 1:]:
+    for n, (w1, t1, r1, a1) in enumerate(sites):
+        for w2, t2, r2, a2 in sites[n + 1:]:
             if t1 != t2 or len(r1) != len(r2):
                 continue
+            if a1 and a2 and a1[0] == a2[0] and a1[1] != a2[1]:
+                continue      # two arms of one statement: only one runs
             if all(_can_meet(a, b, iteration) for a, b in zip(r1, r2)):
                 out.setdefault(t1, []).append(f"{w1} and {w2}")
     return out
@@ -314,6 +334,8 @@ def _ir_specs(node: dict) -> list[tuple[str, str, str]]:
 def _same_condition(written: str, lowered: str) -> bool:
     def flat(text: str) -> str:
         text = text.replace("==", "=").replace("|", "")
+        # `TopDown_i` and `TopDown_{i}` are one subscript.
+        text = text.replace("{", "").replace("}", "")
         return "".join(text.split())
     return flat(written) == flat(lowered)
 
@@ -411,6 +433,98 @@ def _nesting_versus_ir(surface: dict, program: dict, labels: dict) -> list[str]:
     return out
 
 
+def _conditionals_versus_ir(surface: dict, program: dict,
+                            labels: dict) -> list[str]:
+    """Each multi-output case statement against the conditional cascade it
+    lowered to: the same arms in the same order, each from the macro and
+    under the condition the specification writes, holding exactly that
+    macro's Einsums and writing every tensor the statement names. Nothing
+    else may sit in an arm.
+    """
+    from edge_workbench import cascade_shape as shape
+
+    out: list[str] = []
+    written = list(getattr(surface, "conditionals", []))
+    macros = getattr(surface, "macros", {})
+    placed = shape.placement(program)
+    nodes = flat_nodes(program)
+    lowered = shape.conditionals(program)
+    literals = shape.literal_values(program)
+    if len(written) != len(lowered):
+        out.append(
+            f"einsum.edge writes {len(written)} multi-output case "
+            f"statement(s) over macros; the IR has {len(lowered)} conditional "
+            f"cascade(s). Each statement is ONE ConditionalCascade entry.")
+        return out
+    owner: dict[int, str] = {}
+    for label, idx in labels.items():
+        for i in (idx if isinstance(idx, list) else [idx]):
+            owner[i] = label
+    for number, (stmt, entry) in enumerate(zip(written, lowered)):
+        arms = entry.get("arms", [])
+        if len(arms) != len(stmt.arms):
+            out.append(f"{stmt.label}: einsum.edge writes {len(stmt.arms)} "
+                       f"arm(s), the IR's conditional cascade has {len(arms)}")
+            continue
+        for k, (call, arm) in enumerate(zip(stmt.arms, arms)):
+            where = f"{stmt.label} arm {k + 1} ({call.macro})"
+            if arm.get("macro") != call.macro:
+                out.append(f"{where}: the IR arm is from macro "
+                           f"{arm.get('macro')!r}")
+            got = shape.predicate_text(arm.get("when"), literals)
+            if not _same_condition(call.cond, got):
+                out.append(f"{where}: spec condition "
+                           f"`{call.cond or 'otherwise'}`, IR condition "
+                           f"`{got or 'otherwise'}`. The condition decides "
+                           f"which macro a generation runs.")
+            inside = [i for i, p in enumerate(placed)
+                      if any(a["conditional"] == number and a["arm"] == k
+                             for a in p["arms"])]
+            want = list(getattr(macros.get(call.macro), "labels", []))
+            have = [owner.get(i, f"node {i}") for i in inside]
+            if have != want:
+                out.append(f"{where}: the macro's body is {want}; the IR arm "
+                           f"holds {have}. An arm is exactly `expand(...)` "
+                           f"of its macro, in order.")
+            wrote = {(nodes[i]["output_tensor"],
+                      _rank_text(nodes[i]["output_ranks"][0])
+                      if nodes[i].get("output_ranks") else "")
+                     for i in inside}
+            for name, ranks in stmt.outputs:
+                gen = ranks[0].replace(" ", "") if ranks else ""
+                if (name, gen) not in wrote:
+                    out.append(f"{where}: the statement's output "
+                               f"{name}_{{{', '.join(ranks)}}} is not written "
+                               f"in this arm of the IR")
+    for label, e in sorted(surface.items()):
+        if e.macro or label not in labels:
+            continue
+        idx = labels[label]
+        first = idx[0] if isinstance(idx, list) else idx
+        if first < len(placed) and placed[first]["arms"]:
+            out.append(f"{label}: einsum.edge writes it in the cascade "
+                       f"itself; the IR has it inside a conditional arm")
+    return out
+
+
+def constants_versus_ir(constants: dict[str, str], program: dict) -> list[str]:
+    """Every `- Constants` line is a zero-rank declaration carrying that
+    value: part of the program, so no instance supplies or changes it."""
+    out = []
+    decls = {d["name"].lower(): d for d in program.get("declarations", [])}
+    for name, value in sorted(constants.items()):
+        d = decls.get(name.lower())
+        if d is None or d.get("ranks"):
+            out.append(f"constant {name}: einsum.edge sets {name} = {value}; "
+                       f"the IR has no zero-rank declaration named "
+                       f"{name[:1].upper() + name[1:]} for it")
+            continue
+        if normalise_empty(d.get("value")) != normalise_empty(value):
+            out.append(f"constant {name}: einsum.edge sets {value}, the IR "
+                       f"declaration carries {d.get('value')!r}")
+    return out
+
+
 def spec_versus_ir(surface: dict[str, SurfaceEinsum],
                    declared: dict[str, SurfaceDeclaration],
                    program: dict, cascade: dict) -> list[str]:
@@ -449,8 +563,10 @@ def spec_versus_ir(surface: dict[str, SurfaceEinsum],
         # the lowering introduced, which write tensors the spec does not.
         for node in lowered[-1:]:
             written = alias.get(node["output_tensor"], node["output_tensor"])
-            if written != e.output:
-                out.append(f"{where}: spec writes {e.output}, IR writes "
+            # In a macro's body the spec writes a formal name; the IR holds
+            # what the call binds it to.
+            if written not in (e.writes or (e.output,)):
+                out.append(f"{where}: spec writes {e.actual}, IR writes "
                            f"{written}")
             if e.output_ranks and node.get("output_ranks"):
                 want = e.output_ranks[0].replace(" ", "")
@@ -488,6 +604,7 @@ def spec_versus_ir(surface: dict[str, SurfaceEinsum],
 
     out += _cases_versus_ir(surface, program, labels)
     out += _nesting_versus_ir(surface, program, labels)
+    out += _conditionals_versus_ir(surface, program, labels)
 
     helpers = helper_tensors(surface, program, labels, alias)
     for decl in program.get("declarations", []):

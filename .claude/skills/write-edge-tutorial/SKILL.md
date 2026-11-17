@@ -66,9 +66,11 @@ where you can foresee them.
 ## Hard rules
 
 - **Never edit `verifier.py`, `verifier.lock` or anything under
-  `~/.config/edge-workbench/`**, never set `EDGE_WORKBENCH_LEDGER`, and never
-  run `approve-verifier` (it needs the author's own terminal). If `check`
-  says the verifier is unapproved or changed, stop and tell the author.
+  `~/.config/edge-workbench/`**, and never set `EDGE_WORKBENCH_LEDGER`. Run
+  `approve-verifier` only as checkpoint C describes: with `--confirm` and
+  `--sha`, right after showing the author the whole file, so their "allow"
+  at the permission prompt is the approval. If `check` says the verifier is
+  unapproved or changed, stop and tell the author.
 - **After checkpoint B, an Einsum, a declaration, the worked example or its
   expected answer changes only with the author's yes.** Show the line, the
   failing evidence and the proposed change; wait.
@@ -214,9 +216,23 @@ What it compares is what the tutorial states as the answer; where a free
 choice allows several valid final states, compare what they all share
 (depths, not parents).
 
-**Checkpoint C:** the author runs, in their own terminal,
-`python3 -m edge_workbench approve-verifier <dir>`, which shows the whole
-file. Do not continue until they say it is done.
+**Checkpoint C comes at the end.** Do not ask for approval yet: go on to
+Phase 7. `check` runs every stage that does not need the verifier, then
+stops once with `… approval`, when the tutorial's published answer is known.
+Then the author approves, one of two ways:
+
+- **In this session (one click).** Show the author, in your reply, the whole
+  `verifier.py`, its sha (`shasum -a 256 <dir>/verifier.py`, first 12
+  characters), its KIND and METHOD, and the published answer `check`
+  printed. Then run exactly
+  `python3 -m edge_workbench approve-verifier <dir> --confirm "<METHOD>" --sha <first 12 of the sha>`.
+  The project settings make this command always ask the author first; their
+  "allow" at that prompt IS the approval, so never run it without having
+  shown the file in the same reply, and never retry a refused prompt. If
+  the file changed after you showed it, the command refuses: show it again.
+- **In their own terminal:** `python3 -m edge_workbench approve-verifier <dir>`.
+
+Either way, do not continue until it has succeeded.
 
 ## Phase 7 — Run `check`, and answer its model steps
 
@@ -238,7 +254,9 @@ Each run lists every problem, then stops. Loop:
   mismatches you cannot fix in the builder, coverage, answer check): diagnose
   first — trace the failing instance by hand as in Phase 4 — then bring the
   author the evidence and a proposed change. Do not change it yourself.
-- **inputs: verifier not approved / changed**: stop; checkpoint C.
+- **`… approval`** (never approved; everything else passed): checkpoint C.
+- **inputs ✗: verifier changed since approval, or a lock not written by
+  `approve-verifier`**: stop and tell the author; never try to fix it.
 - The same finding three times in a row: stop and report what you tried.
 
 Keep a change log as you go: every file you changed to get a pass, and why,

@@ -514,8 +514,40 @@ def _steps(program: dict, cascade: dict, records: list[dict], result,
     outer = (where[0]["ranks"][0] if where and where[0]["ranks"]
              else gen.lower())
     generations = result.trace.generations
+    # A multi-output case statement over macros is not an Einsum, so nothing
+    # records it; the step that shows WHICH macro a generation ran is made
+    # here, before the first Einsum of the arm, with the state as the
+    # condition saw it.
+    from edge_workbench.cascade_shape import (arm_condition, conditionals,
+                                              literal_values)
+    statement = {v["conditional"]: label for label, v in
+                 (cascade.get("conditionals") or {}).items()}
+    branches = conditionals(program)
+    literals = literal_values(program)
+    chosen: set = set()
     k = 0
     while k < len(body_recs):
+        for arm in where[node_of[k]]["arms"]:
+            at = (arm["conditional"],
+                  tuple(sorted(body_recs[k]["pinned"].items())))
+            if arm["conditional"] not in statement or at in chosen:
+                continue
+            chosen.add(at)
+            pinned = body_recs[k]["pinned"]
+            before = (body_recs[k - 1]["written"] if k else
+                      init_recs[-1]["written"] if init_recs else None)
+            taken = branches[arm["conditional"]]["arms"][arm["arm"]]
+            steps.append({
+                "id": len(steps), "einsum": statement[arm["conditional"]],
+                "iteration": pinned.get(outer,
+                                        next(iter(pinned.values()), None)),
+                "output": None,
+                "state": _flat(body_recs[k]["before"], gen_tensors, alias,
+                               before),
+                "arm": arm,
+                "choice": {"macro": arm.get("macro"), "arm": arm["arm"],
+                           "of": arm["of"],
+                           "condition": arm_condition(taken, literals)}})
         label = owner.get(node_of[k], f"node{node_of[k]}")
         j = k
         # One written Einsum lowered to several consecutive IR nodes (an

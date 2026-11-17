@@ -47,8 +47,11 @@ function walk(name) {
     check(at, !shown.includes("\\"), `raw LaTeX in the formula: ${shown.slice(0, 60)}`);
     check(at, !/undefined|NaN|\[object/.test(get("now")?.textContent ?? ""), "junk text");
 
-    // A value is shown as its tensor is declared.
-    (w.eval("IR").declarations || []).filter((t) => t.data_type?.name === "bool").forEach((t) => {
+    // A value is shown as its tensor is declared. A literal (a zero-rank
+    // declaration carrying its value, like the False a condition compares
+    // against) is that value, not an entry that may be absent.
+    (w.eval("IR").declarations || []).filter((t) => t.data_type?.name === "bool"
+      && (t.value === undefined || t.value === null)).forEach((t) => {
       const held = s.state[t.name] || {};
       check(at, Object.values(held).every((v) => v === true),
         `${t.name} is Boolean but holds ${JSON.stringify(Object.values(held))}`);

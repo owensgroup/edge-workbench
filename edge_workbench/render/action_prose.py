@@ -367,14 +367,56 @@ class Describer:
         return whole.format(x=operand, r=over)
 
     def _restricted(self, einsum: dict) -> str:
-        """` in root_id`, when the output is limited to a set of coordinates."""
+        """` in root_id` or ` with j ≥ 1`, when the output is limited."""
         text = ""
         for p in einsum.get("predicates", []):
             if p.get("kind") == "set_membership":
                 name = (p.get("coord_set") or {}).get("name", "?")
                 text += (f" not in {name}" if p.get("negated")
                          else f" in {name}")
+            else:
+                text += f" with {self._condition(p)}"
         return text
+
+    _OP = {"==": "=", "!=": "≠", ">=": "≥", "<=": "≤", ">": ">", "<": "<"}
+
+    def _condition(self, p: dict | None) -> str:
+        """A predicate over rank variables, as written: `n = j+1`."""
+        if not p:
+            return ""
+        kind = p.get("kind")
+        if kind == "comparison":
+            return (f"{_rank(p['lhs'])} {self._OP.get(p['op'], p['op'])} "
+                    f"{_rank(p['rhs'])}")
+        if kind in ("and", "or"):
+            return f" {kind} ".join(self._condition(q)
+                                    for q in p.get("operands", []))
+        if kind == "not":
+            return f"not ({self._condition(p.get('operand'))})"
+        if kind == "set_membership":
+            name = (p.get("coord_set") or {}).get("name", "?")
+            return (f"{_rank(p['member'])} "
+                    f"{'not in' if p.get('negated') else 'in'} {name}")
+        return "?"
+
+    def _cases(self, einsum: dict) -> str:
+        """One clause per arm, in order: the first arm that holds wins."""
+        parts = []
+        for arm in einsum["expression"].get("arms", []):
+            cond = self._condition(arm.get("where")) or "otherwise"
+            if arm.get("when"):
+                cond = (cond + " and when " if arm.get("where") else "when ") \
+                    + "its condition holds"
+            if arm.get("expression") is None:
+                parts.append(f"nothing (empty) {('if ' + cond) if cond != 'otherwise' else 'otherwise'}")
+                continue
+            sub = {"output_tensor": einsum["output_tensor"],
+                   "output_ranks": einsum.get("output_ranks", []),
+                   "expression": arm["expression"],
+                   "specs": arm.get("specs", [])}
+            body = self._bare_reduce(sub) or self._body(sub)
+            parts.append(f"{body} {('if ' + cond) if cond != 'otherwise' else 'otherwise'}")
+        return "by cases, the first that holds: " + "; ".join(parts)
 
     # -- the stopping condition -------------------------------------------
     def _stop_value(self, node: dict) -> str:
@@ -413,6 +455,13 @@ class Describer:
         limit = self._restricted(einsum)
         out = self.tensor(einsum["output_tensor"])
         specs = einsum.get("specs", [])
+
+        if expr.get("kind") == "cases":
+            body = self._cases(einsum)
+            if not head:
+                return body
+            return (f"For each {point} of {out}{limit}, {body}." if point
+                    else f"{body[0].upper() + body[1:]}.")
 
         populates = [s for s in specs if s.get("kind") == "populate"]
         if populates:

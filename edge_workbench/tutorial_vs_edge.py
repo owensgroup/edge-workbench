@@ -47,7 +47,11 @@ from edge_workbench import tutorial as tut
 _LATEX = [
     # Spacing first: `\ ` would otherwise eat the backslash of a `/\ ` this
     # table has just produced.
-    (r"\,", " "), (r"\;", " "), (r"\ ", " "), (r"\!", ""), (r"\quad", " "),
+    (r"\,", " "), (r"\;", " "), (r"\ ", " "), (r"\!", ""), (r"\qquad", " "),
+    (r"\quad", " "),
+    # A multi-output statement's left-hand side, and a macro's `|->`.
+    (r"\begin{pmatrix}", "("), (r"\end{pmatrix}", ")"), (r"\mapsto", "->"),
+    (r"\alpha", "alpha"), (r"\beta", "beta"),
     (r"\_", "_"), (r"\ast", "*"),
     ("{-}", "-"), ("{+}", "+"),               # `N{-}1`: tight binary spacing
     (r"\textstyle", ""), (r"\displaystyle", ""),
@@ -116,6 +120,16 @@ class Sides:
     initialization_latex: list[str] = field(default_factory=list)
     stopping_latex: list[str] = field(default_factory=list)
     definitions: list[str] = field(default_factory=list)
+    macros: dict[str, "MacroSide"] = field(default_factory=dict)
+
+
+@dataclass
+class MacroSide:
+    """One macro, from either side: its header and its body's Einsums."""
+
+    header: str                       # `NAME(formals) -> outputs`, ASCII
+    cascade: list[Line]
+    latex: str = ""                   # the tutorial's header, when read there
 
 
 # ------------------------------------------------------------- readers ---
@@ -180,6 +194,47 @@ def _named_block(md: Path, name: str) -> str:
     return "\n".join(line.strip() for line in full[0].splitlines())
 
 
+_MACRO_HEADING = re.compile(r"\\triangleright\s*\\textbf\{MACRO\}")
+
+
+def _macro_blocks(md: Path, cascade: str) -> dict[str, MacroSide]:
+    """name -> the `▷ MACRO NAME(formals) ↦ outputs` blocks that belong to
+    one cascade: those the tutorial gives after that cascade's block and
+    before its next cascade. A tutorial may define a macro of the same name
+    again for a later cascade (DO-BFS's compact hybrid redefines both).
+
+    A header may break before its `↦`; the body follows it.
+    """
+    out: dict[str, MacroSide] = {}
+    text = Path(md).read_text()
+    flat = lambda b: "".join(b.replace("$", "").split())      # noqa: E731
+    blocks = [b for b in re.findall(r"\$\$(.*?)\$\$", text, re.DOTALL)
+              if r"\begin{aligned}" in b]
+    start = next((k for k, b in enumerate(blocks)
+                  if flat(cascade) and flat(cascade) in flat(b)), None)
+    if start is None:
+        return out
+    for block in blocks[start + 1:]:
+        if _HEADING.search(block):
+            break                              # the next cascade
+        if not _MACRO_HEADING.search(block) or r"\triangleright" not in block:
+            continue
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()
+                 and not ln.strip().startswith((r"\begin{aligned}",
+                                                r"\end{aligned}"))]
+        head: list[str] = []
+        while lines and (not head or r"\mapsto" not in " ".join(head)):
+            head.append(lines.pop(0))
+        tex = " ".join(_clean_latex(h) for h in head)
+        header = latex_to_surface(_MACRO_HEADING.sub("", tex))
+        name = re.match(r"\s*([A-Za-z][A-Za-z0-9-]*)", header)
+        if not name:
+            continue
+        body = _read_block("\n".join(lines))
+        out.setdefault(name.group(1), MacroSide(header, body.cascade, tex))
+    return out
+
+
 def read_tutorial(md: Path, which: str | None = None) -> Sides:
     if which:
         block = _named_block(Path(md), which)
@@ -187,6 +242,19 @@ def read_tutorial(md: Path, which: str | None = None) -> Sides:
         block = tut._block_scalar(Path(md).read_text(), "edge_expression")
     if block is None:
         raise tut.TutorialError(f"{md} has no `edge_expression:` block")
+    sides = _read_block(block)
+    # The macros this cascade calls are written in blocks of their own.
+    called = {c.macro for ln in sides.cascade
+              for c in map(ss._call, ss.case_arms(ln.text))
+              if ss.CONDITIONAL_RE.match(ln.text)}
+    if called:
+        given = _macro_blocks(Path(md), block)
+        sides.macros = {n: m for n, m in given.items() if n in called}
+    return sides
+
+
+def _read_block(block: str) -> Sides:
+    """One aligned block: its declarations, initialization, Einsums, stops."""
 
     section = "cascade"
     decls: dict[str, ss.SurfaceDeclaration] = {}
@@ -220,7 +288,8 @@ def read_tutorial(md: Path, which: str | None = None) -> Sides:
             section = ("tensors" if "tensors" in low else
                        "init" if "initiali" in low else "cascade")
             continue
-        if pending or r"\begin{cases}" in line or line.rstrip().endswith("="):
+        if pending or r"\begin{cases}" in line or line.rstrip().endswith("=") \
+                or r"\begin{pmatrix}" in line:
             pending.append(line)
             if r"\end{cases}" in line:
                 if section == "init":
@@ -255,7 +324,7 @@ def read_tutorial(md: Path, which: str | None = None) -> Sides:
                     continue                  # an input, not an assignment
                 init.append(piece_text)
                 init_tex.append(piece)
-        elif ss.HEAD_RE.match(text):
+        elif ss.HEAD_RE.match(text) or ss.CONDITIONAL_RE.match(text):
             # Only lines that write a tensor. A definition such as the stamp
             # function `\sigma(depth, r) = ...` is not part of the cascade,
             # but it is what the cascade's `\sigma(...)` means.
@@ -321,8 +390,17 @@ def read_edge(path: Path) -> Sides:
     if block is not None:
         init.append(ss.join_statement(block))
 
-    cascade = [Line(surface[label].text, label) for label in sorted(surface)]
-    return Sides(decls, init, cascade, stop)
+    # The cascade's own statements: its Einsums and its multi-output case
+    # statements, in label order. A macro's body is compared with the
+    # tutorial's macro of the same name.
+    own = {label: e.text for label, e in surface.items() if not e.macro}
+    own.update({c.label: c.text for c in surface.conditionals})
+    cascade = [Line(own[label], label) for label in sorted(own)]
+    macros = {name: MacroSide(re.sub(r"(?i)^macro\s+", "", m.text),
+                              [Line(surface[lb].text, lb)
+                                       for lb in m.labels])
+              for name, m in surface.macros.items()}
+    return Sides(decls, init, cascade, stop, macros=macros)
 
 
 # ------------------------------------------------------------- compare ---
@@ -439,6 +517,13 @@ def written_forms(md: Path, edge: Path) -> dict:
     for tl, label in _labelled(t, e):
         if tl.latex:
             out[label] = tl.latex
+    for name in sorted(set(t.macros) & set(e.macros)):
+        tm, em = t.macros[name], e.macros[name]
+        for tl, label in _labelled(Sides({}, [], tm.cascade, []),
+                                   Sides({}, [], em.cascade, [])):
+            if tl.latex:
+                out[label] = tl.latex
+        out.setdefault("macros", {})[name] = tm.latex
     if len(t.initialization_latex) == 1:
         out["init"] = t.initialization_latex[0]
     elif t.initialization_latex:
@@ -480,29 +565,72 @@ def compare(md: Path, edge: Path) -> list[str]:
             f"{t.initialization[a1:a2] or '(nothing)'}, einsum.edge has "
             f"{e.initialization[b1:b2] or '(nothing)'}")
 
-    tk = [ln.key() for ln in t.cascade]
-    ek = [ln.key() for ln in e.cascade]
-    for op, a1, a2, b1, b2 in difflib.SequenceMatcher(
-            a=tk, b=ek, autojunk=False).get_opcodes():
-        if op == "equal":
-            for tl, el in zip(t.cascade[a1:a2], e.cascade[b1:b2]):
-                out += _compare_line(tl, el)
+    out += _compare_cascades(t.cascade, e.cascade, "cascade")
+
+    for name in sorted(set(t.macros) | set(e.macros)):
+        tm, em = t.macros.get(name), e.macros.get(name)
+        if em is None:
+            out.append(f"macro {name}: the tutorial's cascade calls it, and "
+                       f"einsum.edge has no `- Macro {name}(...)` section")
             continue
-        tutorial_side = [ln.name() for ln in t.cascade[a1:a2]]
-        edge_side = [ln.name() for ln in e.cascade[b1:b2]]
-        if op == "delete":
-            out.append(f"cascade: the tutorial writes {tutorial_side}, which "
-                       f"einsum.edge does not have")
-        elif op == "insert":
-            out.append(f"cascade: einsum.edge writes {edge_side}, which the "
-                       f"tutorial does not have")
-        else:
-            out.append(f"cascade: where einsum.edge writes {edge_side}, the "
-                       f"tutorial writes {tutorial_side}")
+        if tm is None:
+            out.append(f"macro {name}: einsum.edge has a section for it; the "
+                       f"tutorial's cascade does not call a macro of that "
+                       f"name, or gives no `MACRO {name}` block")
+            continue
+        if _flat(tm.header) != _flat(em.header):
+            out.append(f"macro {name}: the headers differ -- tutorial "
+                       f"`{tm.header}`, einsum.edge `{em.header}`")
+        out += _compare_cascades(tm.cascade, em.cascade, f"macro {name}")
 
     if [_flat(x) for x in t.stopping] != [_flat(x) for x in e.stopping]:
         out.append(f"stopping condition: tutorial {t.stopping}, einsum.edge "
                    f"{e.stopping}")
+    out += _constants(md, edge)
+    return out
+
+
+def _compare_cascades(tc: list[Line], ec: list[Line], what: str) -> list[str]:
+    """Two lists of statements, in order, statement by statement."""
+    out: list[str] = []
+    tk = [ln.key() for ln in tc]
+    ek = [ln.key() for ln in ec]
+    for op, a1, a2, b1, b2 in difflib.SequenceMatcher(
+            a=tk, b=ek, autojunk=False).get_opcodes():
+        if op == "equal":
+            for tl, el in zip(tc[a1:a2], ec[b1:b2]):
+                out += _compare_line(tl, el)
+            continue
+        tutorial_side = [ln.name() for ln in tc[a1:a2]]
+        edge_side = [ln.name() for ln in ec[b1:b2]]
+        if op == "delete":
+            out.append(f"{what}: the tutorial writes {tutorial_side}, which "
+                       f"einsum.edge does not have")
+        elif op == "insert":
+            out.append(f"{what}: einsum.edge writes {edge_side}, which the "
+                       f"tutorial does not have")
+        else:
+            out.append(f"{what}: where einsum.edge writes {edge_side}, the "
+                       f"tutorial writes {tutorial_side}")
+    return out
+
+
+def _constants(md: Path, edge: Path) -> list[str]:
+    """Every `- Constants` value is one the tutorial states.
+
+    A constant is not in the tutorial's cascade (if it were it would be an
+    initialization), so it is held to the prose: `alpha = 15` needs the
+    tutorial to say `\\alpha = 15` somewhere. A value nobody published is a
+    choice made in einsum.edge, and the page would run on it unannounced.
+    """
+    out = []
+    said = re.sub(r"\s+", "", latex_to_surface(
+        Path(md).read_text().replace("$", " ")))
+    for name, value in ss.parse_constants(edge).items():
+        if f"{name}={value}" not in said:
+            out.append(f"constant {name}: einsum.edge sets {name} = {value}; "
+                       f"the tutorial does not state that value. Say it in "
+                       f"the tutorial (`\\{name} = {value}`) or remove it.")
     return out
 
 

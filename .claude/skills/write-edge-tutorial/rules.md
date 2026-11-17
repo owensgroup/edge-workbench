@@ -88,13 +88,27 @@ Check each Einsum against this before checkpoint B. The issue numbers are in
   per category (compute, merge, coordinate, unary), before using it.
 - **A unary takes only a named tensor**, not a parenthesized expression
   (issue 3): `⌊F / |R|⌋` needs the degenerate-Map form or a split.
-- **`cases` and inner cascades run; macros do not yet.** A case statement is
-  one Einsum (`= cases:` and one arm per line, AUTHORING.md §2), and an inner
-  cascade is the Einsums between `- Begin inner cascade` and its `<><> :`
-  line; bubble sort uses both. A macro, or a case statement choosing between
-  macros (DOBFS hybrid), cannot be written in `einsum.edge` yet although the
-  evaluator can run one (issue 9): say so at checkpoint B rather than
-  lowering around it.
+- **`cases`, inner cascades and macros run.** A case statement is one Einsum
+  (`= cases:` and one arm per line, AUTHORING.md §2), and an inner cascade is
+  the Einsums between `- Begin inner cascade` and its `<><> :` line; bubble
+  sort uses both. A macro is a `- Macro NAME(inputs) -> outputs` section in
+  formal names, called from a labelled multi-output case statement
+  (`(A_{...}, B_{...}) = cases:` with one call per arm); DOBFS hybrid uses
+  both (issue 9). A macro used inline as an anonymous tensor cannot be
+  written yet: say so at checkpoint B rather than lowering around it.
+- **Declare the actual tensors a macro writes**, not its formal names, and
+  give each a type and an empty value on purpose: a count (`⋁ +(∪)` over
+  Booleans) is an integer whose empty value is 0.
+- **A threshold or other constant the cascade reads is a `- Constants`
+  line**, and the tutorial must state its value. Never make it an input
+  after the verifier is approved: every instance would have to supply it.
+- **Write an action for every operation.** One written inline with no action
+  (`X . (Y / alpha) :: ⋀ >(∩)`) runs with the paper's default merge,
+  pass-through; if the author's Einsum is like that, ask which merge is
+  meant rather than choosing silently, and never rewrite the Einsum.
+- **Check that every branch can happen at the example's size.** DOBFS's
+  switch back to top-down needs `|V| > β`; with β = 18 no small example
+  takes it.
 - **Give every arm of a case statement a condition the worked example or a
   random instance reaches**; an arm nothing exercises stops `check`.
 - **A function-call arm, `min(x, y)`, states no merge**; the builder lowers

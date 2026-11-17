@@ -401,7 +401,8 @@ other_notes: |
   **Switch thresholds ($\alpha$ and $\beta$).** The hybrid algorithm uses two thresholds: $\alpha$
   to decide when to switch from top-down to bottom-up, and $\beta$ to decide when to switch back.
   These parameters are typically chosen empirically and may depend on graph structure (diameter,
-  degree distribution) and hardware (memory bandwidth, cache behavior).
+  degree distribution) and hardware (memory bandwidth, cache behavior). The walkthrough of the
+  hybrid cascade uses the default values from Beamer et al. (2012), $\alpha = 15$ and $\beta = 18$.
 
   **Work estimates ($\mathit{MF}$, $\mathit{MU}$).** $\mathit{MF}_i$ approximates work for top-down
   by measuring total frontier degree. $\mathit{MU}_i$ approximates work for bottom-up by measuring

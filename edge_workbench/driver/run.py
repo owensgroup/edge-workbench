@@ -76,6 +76,8 @@ def run(algorithm: str | None = None, *, spec_dir: str | Path | None = None,
     schedule = ShuffledSchedule(seed=seed) if seed is not None else SequentialSchedule()
 
     records: list[dict] = []
+    schedule_note = ({"kind": "shuffled", "seed": seed} if seed is not None
+                     else {"kind": "sequential"})
     try:
         with _recording(records):
             result = evaluate(
@@ -89,7 +91,7 @@ def run(algorithm: str | None = None, *, spec_dir: str | Path | None = None,
             )
     except EvaluationError as e:
         raise DriverError(f"the cascade did not run.\n{type(e).__name__}: {e}") from e
-    return _steps(prog_json, cascade, records, result, parsed)
+    return _steps(prog_json, cascade, records, result, parsed, schedule_note)
 
 
 # ------------------------------------------------------------- inputs ---
@@ -148,10 +150,17 @@ def _recording(records: list[dict]):
     from edge_ir.evaluator import program as ev_program
 
     original = ev_cascade.evaluate_einsum
+    # Populate's rounds are recorded by the evaluator itself, when it can
+    # (edge-core-ir local patch, issue 11); nothing here works them out.
+    import inspect
+
+    extra = ({"record_populate": True} if "record_populate"
+             in inspect.signature(original).parameters else {})
 
     def recorded(einsum, *, env, pinned=None, schedule=None):
         before = _snapshot(env)
-        res = original(einsum, env=env, pinned=pinned, schedule=schedule)
+        res = original(einsum, env=env, pinned=pinned, schedule=schedule,
+                       **extra)
         after = _snapshot(env)
         inner_map = _inner_map(einsum, res, env, pinned)
         written_gen = None
@@ -458,8 +467,88 @@ def _exec_record(rec: dict, node_json: dict, gen_tensors: set[str],
     }
 
 
+def _populate_record(rec: dict, node_json: dict, gen_tensors: set[str],
+                     alias: dict, cascade: dict, schedule: dict | None) -> dict | None:
+    """What each round of a Populate with a mutable rank did, as the
+    evaluator recorded it (`EinsumResult.populate_rounds`): nothing here is
+    computed, only renamed for the page.
+
+    A round (paper, Inset 4) is one point of the iteration space at which
+    Populate runs: one incoming Reduce Temporary element and the mutable
+    fiber it belongs to. Per round: the fiber's pre-state S, the write set W
+    (with the value the compute operator produced), the delete set D, the
+    fiber afterwards, and whether the evaluator checked W ∩ (dom(S) ∪ D) = ∅
+    against the pre-state. `Loc`, every location of a fiber, is listed once
+    per fiber. None when the evaluator recorded no rounds (assignment, or an
+    edge-core-ir without the recording).
+    """
+    rounds = getattr(rec["result"], "populate_rounds", None)
+    if not rounds:
+        return None
+    einsum = rec["einsum"]
+    gen_first = einsum.output_tensor in gen_tensors
+    spec = next((s for s in node_json.get("specs", [])
+                 if s.get("kind") == "populate"), {})
+    name = (spec.get("coord_op") or {}).get("name")
+    rule = (cascade.get("selectors") or {}).get(name)
+
+    def key(coord) -> str:
+        return _key(tuple(coord), gen_first)
+
+    # A value in a tensor declared Boolean is shown as true, as `_snapshot`
+    # shows it; the incoming element's own value is kept as recorded, since a
+    # ranking operator ranks by it.
+    decl = rec["env"].declarations.get(einsum.output_tensor)
+    boolean = getattr(getattr(decl, "data_type", None), "name", None) == "bool"
+
+    def cells(state: dict) -> dict:
+        return {key(c): (v if isinstance(v, bool) or not boolean else True)
+                for c, v in state.items()}
+
+    fibers: dict[str, dict] = {}
+    out = []
+    for r in rounds:
+        # The fiber is named by its first location with the mutable
+        # coordinates starred, in the output's own rank order.
+        mutable = set(r.mutable_positions)
+        shown = ["*" if k in mutable else str(c)
+                 for k, c in enumerate(r.locations[0])]
+        fk = ",".join(shown[1:] if gen_first else shown)
+        fibers.setdefault(fk, {"loc": [key(c) for c in r.locations],
+                               "rounds": []})
+        fibers[fk]["rounds"].append(len(out))
+        acted = [[key(c), a] for c, a in r.write_del if a != "None"]
+        out.append({
+            "point": dict(zip(r.axes, r.point)),
+            "coord": key(r.output_coord),
+            "value": r.value,
+            "fiber": fk,
+            "pre": cells(r.pre_state),
+            "writeDel": acted,
+            "writeDelSize": len(r.write_del),
+            "W": cells(r.writes),
+            "D": [key(c) for c in r.deletes],
+            "post": cells(r.post_state),
+            "checked": bool(r.constraint_checked),
+        })
+    ranks = [_rank_text(x) for x in node_json.get("output_ranks", [])]
+    positions = sorted(rounds[0].mutable_positions)
+    return {
+        "operator": name,
+        "compute": (spec.get("compute_op") or {}).get("name")
+        or (spec.get("compute_op") or {}).get("symbol"),
+        "mutable": [ranks[k] for k in positions if k < len(ranks)],
+        # A ranking operator is the algorithm's; any other name is a free
+        # choice, run as select-any: the schedule's order decides.
+        "free": isinstance(rule, dict) and rule.get("rule") == "seeded",
+        "schedule": schedule or {"kind": "sequential"},
+        "fibers": fibers,
+        "rounds": out,
+    }
+
+
 def _steps(program: dict, cascade: dict, records: list[dict], result,
-           parsed=None) -> dict:
+           parsed=None, schedule: dict | None = None) -> dict:
     """The run as the page's steps, one per written Einsum executed.
 
     A record is matched to its IR node by identity, not by position: with a
@@ -586,6 +675,10 @@ def _steps(program: dict, cascade: dict, records: list[dict], result,
             step["arm"] = arms[-1]
         if j == k:
             step["exec"] = _exec_record(rec, body[node_of[k]], gen_tensors, alias)
+            populate = _populate_record(rec, body[node_of[k]], gen_tensors,
+                                        alias, cascade, schedule)
+            if populate:
+                step["populate"] = populate
         steps.append(step)
         k = j + 1
 

@@ -9,6 +9,8 @@ const fs = require("fs");
 const path = require("path");
 const { JSDOM, VirtualConsole } = require("jsdom");
 
+// The page inlines this file; the lookups are the same code the page runs.
+const EdgeDisplay = require("../edge_workbench/render/display.js");
 // EDGE_WORKBENCH_PAGES: another directory of author directories to walk
 // instead (pages built outside examples/).
 const EXAMPLES = process.env.EDGE_WORKBENCH_PAGES || path.join(__dirname, "..", "examples");
@@ -31,6 +33,77 @@ function load(file) {
     runScripts: "dangerously", url: "file://" + file, virtualConsole: vc,
   });
   return { dom, errors };
+}
+
+// A Populate with a mutable rank is shown round by round (paper, Inset 4),
+// and every round on the page is the round the evaluator recorded.
+function checkPopulate(w, d, s, at) {
+  const box = d.getElementById("popbox"), P = s.populate;
+  const spec = ((s.exec && s.exec.einsum.specs) || []).find((x) =>
+    x.kind === "populate" && (x.rank_list || []).length);
+  check(at, !spec || !!P || Object.keys(s.exec.result).length === 0,
+    "a Populate with a mutable rank wrote values but recorded no rounds");
+  check(at, (box.style.display !== "none") === !!P, "the Populate rounds are shown wrongly");
+  if (!P) return;
+  const same = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+  const held = (cells) => Object.keys(cells).filter((c) => cells[c] !== false);
+  const drawn = (card, cls) => [...d.querySelectorAll(`#popstrip .tcard.${card} td${cls}`)]
+    .map((c) => c.dataset.coord);
+  const lastOn = {};
+  P.rounds.forEach((R, k) => {
+    const here = `${at} round ${k + 1}`;
+    w.eval(`goRound(${k})`);
+    const F = P.fibers[R.fiber], sets = EdgeDisplay.roundSets(R);
+    check(here, d.getElementById("popno").textContent === `round ${k + 1} of ${P.rounds.length}`,
+      "the round shown is not the round asked for");
+    // Inset 4, on the recorded sets: W ∩ (dom(S) ∪ D) = ∅, and a location
+    // deleted was occupied in the pre-state.
+    check(here, sets.overlap.length === 0, `W meets dom(S) ∪ D at ${sets.overlap}`);
+    check(here, R.D.every((c) => c in R.pre), "a location not in the pre-state was deleted");
+    check(here, sets.W.concat(sets.D).every((c) => F.loc.includes(c)), "W or D leaves the fiber");
+    check(here, R.checked && d.getElementById("popcheck").classList.contains("yes")
+      && d.getElementById("popcheck").textContent.includes("✓"), "the constraint is not marked checked");
+    // Each round starts from what the round before it left in that fiber,
+    // and ends with the pre-state less D plus W.
+    if (R.fiber in lastOn) check(here, same(Object.entries(P.rounds[lastOn[R.fiber]].post).map(String),
+      Object.entries(R.pre).map(String)), "the pre-state is not the previous round's result");
+    lastOn[R.fiber] = k;
+    check(here, same(Object.keys(R.post),
+      Object.keys(R.pre).filter((c) => !R.D.includes(c)).concat(sets.W)),
+      "the state after the round is not the pre-state less D plus W");
+    // The cards draw exactly the recorded pre-state, W and D.
+    check(here, same(drawn("prestate", ".fiber:not(.abs)"), held(R.pre)),
+      `pre-state drawn as ${drawn("prestate", ".fiber:not(.abs)")}, recorded ${held(R.pre)}`);
+    check(here, same(drawn("prestate", ".fiber"), F.loc), "the fiber outlined is not Loc");
+    check(here, same(drawn("poststate", ".wr"), sets.W), "W drawn differs from the record");
+    check(here, same(drawn("poststate", ".del"), sets.D), "D drawn differs from the record");
+    check(here, same(drawn("poststate", ".fiber:not(.abs):not(.del)"), held(R.post)),
+      "the state after the round differs from the record");
+    check(here, same(drawn("redtmp", ".rd"), [R.coord]), "the incoming element is not the one lit");
+    // The candidates of this fiber, in the order the schedule offered them.
+    const rows = [...d.querySelectorAll("#popcands tr[data-round]")];
+    check(here, JSON.stringify(rows.map((r) => +r.dataset.round)) === JSON.stringify(F.rounds),
+      "the candidates listed are not the fiber's rounds in order");
+    check(here, rows.filter((r) => r.classList.contains("cur")).length === 1
+      && rows.find((r) => r.classList.contains("cur")).dataset.round === String(k),
+      "the current round is not marked among the candidates");
+    const body = d.getElementById("popbody").textContent;
+    check(here, !/undefined|NaN|\[object/.test(body), "junk text in the round");
+    // A free choice is shown as free; a ranking operator shows what it ranked.
+    check(here, !!d.getElementById("popfree") === !!P.free
+      && !!d.getElementById("popranked") === !P.free, "free choice and ranking operator confused");
+    if (P.free && F.rounds.length > 1) check(here,
+      body.includes(`All ${F.rounds.length} candidates above were eligible`)
+      && body.includes(P.schedule.kind), "a free choice among several is not shown as free");
+    if (!P.free && /[-_]val/.test(P.operator)) check(here,
+      body.includes("ranked by value: incoming [" + R.coord + "]"), "the ranked value is not shown");
+  });
+  // The rounds end at the state the step recorded for its output.
+  const end = EdgeDisplay.outputAt(P, s.state[s.output], P.rounds.length - 1, "post");
+  check(at, same(Object.entries(end).map(String),
+    Object.entries(s.state[s.output] || {}).map(String)),
+    "the last round does not leave the output the step recorded");
+  w.eval("goRound(0)");
 }
 
 function walk(name) {
@@ -56,6 +129,7 @@ function walk(name) {
       check(at, Object.values(held).every((v) => v === true),
         `${t.name} is Boolean but holds ${JSON.stringify(Object.values(held))}`);
     });
+    checkPopulate(w, d, s, at);
     const cells = [...d.querySelectorAll("#tstrip td.pick")];
     check(at, !s.exec || cells.length > 0 || Object.keys(s.exec.result).length === 0
       || w.eval("EXEC") !== null, "an executed step has no grids");
@@ -129,7 +203,12 @@ function walk(name) {
   w.close();
 }
 
-const { meaningHTML } = require("../edge_workbench/render/display.js");
+function populateRounds(name) {
+  const html = fs.readFileSync(path.join(EXAMPLES, name, "index.html"), "utf8");
+  return (html.match(/"writeDelSize":/g) || []).length;
+}
+
+const { meaningHTML } = EdgeDisplay;
 const mark = (tex) => `[${tex}]`;
 check("meaningHTML", meaningHTML("to $v$ & \\(u_i\\) < 1", mark) === "to [v] &amp; [u_i] &lt; 1",
       "math in a caption was not picked out");
@@ -139,6 +218,11 @@ const names = fs.readdirSync(EXAMPLES).filter((n) =>
   fs.existsSync(path.join(EXAMPLES, n, "index.html")));
 names.forEach(walk);
 
+const rounds = names.reduce((n, name) => n + populateRounds(name), 0);
+// The examples include cascades with a Populate; another directory need not.
+check("populate", rounds > 0 || !!process.env.EDGE_WORKBENCH_PAGES,
+  "no page shows a Populate round");
 failed.filter(Boolean).forEach((f) => console.log("FAIL " + f));
-console.log(`${names.length} pages: ${passed} passed, ${failed.length} failed`);
+console.log(`${names.length} pages: ${passed} passed, ${failed.length} failed`
+  + ` (${rounds} Populate rounds)`);
 process.exit(failed.length ? 1 : 0);

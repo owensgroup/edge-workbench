@@ -29,6 +29,21 @@
   under each formula in `edge_expression_walkthrough` win; then the model's
   text; then a sentence generated from the IR (`render/action_prose.py`).
   No word limit.
+- A Populate with a mutable rank runs in rounds (paper §6.6, Inset 4; the
+  only sense in which "round" is used): one per Reduce Temporary element, in
+  the order the schedule hands them out, each on the one fiber the element
+  belongs to. The evaluator checks `W ∩ (dom(S) ∪ D) = ∅` against the
+  pre-state before applying the deletes and then the writes, and raises on a
+  violation. `evaluate_einsum(record_populate=True)` records every round
+  (issue 11); the driver passes it through as `step["populate"]` and the page
+  only looks rounds up (`display.js`: `fiberStateAt`, `candidateFate`).
+- `select-any` writes the first arrival into an empty fiber and returns None
+  for every later one: the schedule decides, never the operator.
+  `select-{min,max}-val` deletes the held coordinate and writes the incoming
+  one when it ranks better, ties by coordinate (issue 4), so its result does
+  not depend on the schedule.
+- The page's own run uses the sequential schedule (sorted coordinates); the
+  answer check runs free choices under shuffled schedules as well.
 
 ## Decisions
 

@@ -2,7 +2,7 @@
 
 Gaps found while building walkthrough pages with edge-workbench. edge-core-ir's
 evaluator is the source of truth for EDGE semantics, so each is written up for
-Toluwa to decide. Issues 1, 2, 7, 8, 9 and 10 are patched locally for now, so
+Toluwa to decide. Issues 1, 2, 7, 8, 9, 10 and 11 are patched locally for now, so
 that other tutorials are not held up; see "Local changes" below. Each section is meant to
 be pasted as one GitHub issue.
 
@@ -363,9 +363,65 @@ of this file).
 
 ---
 
+## 11. What each round of Populate did, in the evaluation trace
+
+**Where it came up:** the walkthrough page for an Einsum with a mutable rank,
+e.g. max-flow E10 and set-cover E01:
+
+```
+PushCand_{i+1,u,v*} = Adm_{i,u,v} :: ⋘_{v*} 𝟙(pick-admissible-edge)
+F_{i,r*} = S_{i,r} :: ⋘_{r*} 𝟙(select-max-val)
+```
+
+**Problem.** `populate_action` runs one round per Reduce Temporary element
+(paper §6.6.1; Inset 4): it selects the mutable fiber, calls the coordinate
+operator, checks the write-del set against the pre-state and applies it. None
+of that is kept. `EinsumResult` has the Reduce Temporary and the caller can
+see the output before and after the whole Einsum, so a page can show which
+candidates went in and which coordinate came out, but not the order the
+schedule offered them in, what the fiber held when each arrived, or what was
+written and deleted. Relates to issue 5 (per-label values in the trace) and
+issue 6 (a per-Einsum hook): all three ask the evaluator to keep what it
+already computes.
+
+**Request.** Optionally record, per round: the iteration-space point, the
+incoming element (`cs^R`, `dv_r`), the fiber key and the fiber's locations
+(`Loc`), the pre-state `S`, the write-del set, the delete set `D`, the write
+set `W` with the value the compute operator produced, the fiber afterwards,
+and that `W ∩ (dom(S) ∪ D) = ∅` was checked.
+
+**Checked while doing this: Populate obeys Inset 4.** `_check_constraints`
+runs before any delete or write is applied and reads the pre-state: a
+coordinate marked Write that is occupied in the pre-state raises
+`PopulateConstraintViolation` (a), as does one marked both Delete and Write
+(b), and a location deleted in one round can be written by a later one (c).
+The existing suite pinned only (a); `tests/test_populate_rounds.py` now pins
+all three, including that deleting a location does not free it for a write in
+the same round. Nothing in the semantics was changed. Two things the paper
+does not ask for and the evaluator does not check, noted in case they should
+be: a Delete of a location that is empty in the pre-state is accepted (it is
+a no-op), and a write-del set need not have one element per fiber location
+(`select-any` may append the incoming coordinate).
+
+Fixed locally for now (see the end of this file).
+
+---
+
 ## Local changes in edge-core-ir, for review
 
 Uncommitted edits in edge-core-ir, all needing Toluwa's decision.
+
+Made on 2026-11-16, at Sanjana's request (the page must show exactly how a
+Populate executes). All 923 existing tests pass unchanged; 7 new ones:
+
+- issue 11, Populate rounds in the trace: a `PopulateRound` dataclass and an
+  optional `rounds=` list on `populate_action` in
+  `edge_ir/evaluator/actions/populate.py`; `record_populate=False` on
+  `evaluate_einsum` and `EinsumResult.populate_rounds` (None unless asked)
+  in `edge_ir/evaluator/einsum.py`; `tests/test_populate_rounds.py`.
+  Recording only: off by default, nothing computed differently, `evaluate`
+  and `Program` untouched. edge-workbench turns it on from the wrapper it
+  already puts around `evaluate_einsum` (issue 6).
 
 Made on 2026-11-16, at Sanjana's request ("add the code to handle cases and
 macros as local patches"). All 896 existing tests pass unchanged; 27 new ones:

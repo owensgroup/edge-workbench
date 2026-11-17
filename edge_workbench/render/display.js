@@ -116,8 +116,69 @@ const EdgeDisplay = (function () {
       .join("");
   }
 
+  /* ---- Populate, as recorded --------------------------------------------
+     `P` is a step's `populate` record (driver/run.py): the evaluator's own
+     account of every round. A round (paper, Inset 4) is one point of the
+     iteration space at which Populate runs. These are lookups into that
+     record; none of them decides what a coordinate operator does. */
+
+  // The recorded state of one mutable fiber just before ("pre") or just
+  // after ("post") round `r`: this round's own record when it is on that
+  // fiber, otherwise what the nearest earlier round on the fiber left, or
+  // (none yet) what the fiber's first round found.
+  function fiberStateAt(P, fiber, r, when) {
+    const on = (P.fibers[fiber] || { rounds: [] }).rounds;
+    if (!on.length) return {};
+    if (P.rounds[r] && P.rounds[r].fiber === fiber) return P.rounds[r][when];
+    const earlier = on.filter((k) => k < r);
+    return earlier.length ? P.rounds[earlier[earlier.length - 1]].post
+      : P.rounds[on[0]].pre;
+  }
+
+  // The output tensor as round `r` found or left it. `outside` is the
+  // output's state after the step: Populate changes only the fibers it
+  // recorded, so every other location is read from there.
+  function outputAt(P, outside, r, when) {
+    const recorded = new Set();
+    Object.values(P.fibers).forEach((f) => f.loc.forEach((c) => recorded.add(c)));
+    const out = {};
+    Object.keys(outside || {}).forEach((c) => {
+      if (!recorded.has(c)) out[c] = outside[c];
+    });
+    Object.keys(P.fibers).forEach((f) =>
+      Object.assign(out, fiberStateAt(P, f, r, when)));
+    return out;
+  }
+
+  // What became of the candidate round `r` brought, read off the record:
+  // whether its coordinate was written in its own round, the later round
+  // (on the same fiber) that deleted it, and whether the fiber still holds
+  // it after its last round.
+  function candidateFate(P, r) {
+    const R = P.rounds[r], on = P.fibers[R.fiber].rounds;
+    const written = Object.prototype.hasOwnProperty.call(R.W, R.coord);
+    const later = on.filter((k) => k > r);
+    const deleted = later.find((k) => P.rounds[k].D.includes(R.coord));
+    const rewritten = later.find((k) =>
+      Object.prototype.hasOwnProperty.call(P.rounds[k].W, R.coord));
+    const last = P.rounds[on[on.length - 1]].post;
+    return { written, deletedIn: deleted === undefined ? null : deleted,
+             rewrittenIn: rewritten === undefined ? null : rewritten,
+             kept: Object.prototype.hasOwnProperty.call(last, R.coord) };
+  }
+
+  // Inset 4's sets for one round, and the locations of W that are also in
+  // dom(S) or D. The evaluator raises on a violation, so `overlap` is empty
+  // in every recorded round; the page check asserts it.
+  function roundSets(R) {
+    const W = Object.keys(R.W), dom = Object.keys(R.pre), D = R.D.slice();
+    const barred = new Set(dom.concat(D));
+    return { W, dom, D, overlap: W.filter((c) => barred.has(c)) };
+  }
+
   return { MERGE_TT, MERGE_GLYPH, UNARY_GLYPH, COMPUTE_GLYPH, glyph, num, isEmpty,
-           plainFormula, esc, meaningHTML };
+           plainFormula, esc, meaningHTML,
+           fiberStateAt, outputAt, candidateFate, roundSets };
 })();
 
 if (typeof module !== "undefined") module.exports = EdgeDisplay;

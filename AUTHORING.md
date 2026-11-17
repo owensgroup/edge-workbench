@@ -384,6 +384,28 @@ by MathJax, loaded from the web; offline, or in a viewer that blocks it, they
 appear in plain text and everything else works the same. Every value it shows was computed by edge-core-ir's
 evaluator during `check`; the page only displays that run.
 
+### What the page shows for a Populate
+
+An Einsum with a mutable rank (`:: <<<_{v*} 1(name)`) is shown round by
+round, in the paper's sense (§6.6, Inset 4): one round per point of the
+iteration space that reached Populate, in the order the schedule offered
+them. Under "Populate, round by round" you step through the rounds, and each
+shows:
+
+- the Reduce Temporary (the candidates), with this round's element lit and
+  its mutable fiber outlined;
+- the output's **pre-state** `S`, and the output after the round, with the
+  write set `W` and the delete set `D` marked;
+- what the coordinate operator returned (its write-del set), and for a
+  ranking operator the values it ranked;
+- the check `W ∩ (dom(S) ∪ D) = ∅`, which the evaluator makes against the
+  pre-state before it applies anything;
+- every candidate of that fiber in the order offered, and what became of it.
+
+A free choice is shown as free: the page lists every candidate that was
+eligible and says which schedule put the held one first. All of it is the
+evaluator's own record of the run; the page works nothing out.
+
 ## Things that catch people out
 
 - A stored value equal to a tensor's declared empty value is absent. With

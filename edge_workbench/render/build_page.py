@@ -550,6 +550,25 @@ table.fold tr.kept td{background:#e3f1fd;font-weight:700}
   outline:2px solid #4dabf7;outline-offset:-2px}
 .mini td.wr{background:#e5d9fb;color:#4c2f9e;font-weight:700;
   outline:2px solid #9c6ade;outline-offset:-2px}
+/* ---- Populate, round by round (paper 6.6, Inset 4) ---- */
+#popbox{margin-top:14px;padding-top:12px;border-top:1px solid #eee}
+#popbox h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+  color:#999;margin:0 0 7px;font-weight:700}
+#popnav{display:flex;align-items:center;gap:8px;margin:0 0 10px}
+#popnav button{padding:2px 9px;margin:0;font-size:12px}
+#popno{font-family:ui-monospace,monospace;font-size:12px;font-weight:600;color:#5f3dc4}
+.tcard.redtmp .cap,.tcard.prestate .cap,.tcard.poststate .cap{color:#5f3dc4}
+.mini td.fiber{box-shadow:0 0 0 1px #7950f2}
+.mini td.del{background:#ffe3e3;color:#c92a2a;font-weight:700;
+  outline:2px solid #fa5252;outline-offset:-2px}
+#popbody{margin-top:10px;max-width:820px}
+.popc{border-collapse:collapse;font-size:12px;margin-top:6px;font-family:ui-monospace,monospace}
+.popc td,.popc th{padding:3px 9px;border-top:1px solid #eee;text-align:left}
+.popc th{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#999;font-weight:600;border-top:none}
+.popc tr{cursor:pointer}
+.popc tr.cur td{background:#f3edff}
+.popc tr.won td{font-weight:700}
+.pill.free{background:#fff3bf;color:#8a6d00}
 #mpoint h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;
   color:#999;margin:0 0 7px;font-weight:700}
 .collapse{margin-top:8px;font-size:11.5px;color:#5f3dc4;background:#faf7ff;
@@ -641,6 +660,14 @@ svg text{font-family:-apple-system,Segoe UI,sans-serif}
      <span class="sub" id="execsub"></span></h3>
    <div class="tstrip" id="tstrip"></div>
    <div class="spacenote" id="snote"></div>
+   <div id="popbox" style="display:none">
+     <h3>Populate, round by round <span class="h3sub" id="popsub"></span></h3>
+     <div id="popnav"><button id="popprev" title="Previous round of Populate">◀</button>
+       <span id="popno"></span>
+       <button id="popnext" title="Next round of Populate">▶</button></div>
+     <div class="tstrip" id="popstrip"></div>
+     <div id="popbody"></div>
+   </div>
    <div id="execsplit">
      <div id="mpoint"><h3>How this value is computed</h3><div id="pbody"></div></div>
    </div>
@@ -920,6 +947,7 @@ function buildExec(coord){
     $('execsub').textContent='— '+whyNotExpandable(s);
     $('tstrip').innerHTML=''; $('snote').innerHTML='';
     $('pbody').innerHTML='';
+    buildPopulate(null);
     return;}
   // Recorded at build time from edge-core-ir's evaluator: every point of the
   // iteration space, the operand cells it read, and what it produced.
@@ -930,14 +958,21 @@ function buildExec(coord){
   EXEC={s,R,before,sel:coord!==undefined&&coord!==null?String(coord):null};
   if(EXEC.sel===null&&R.points.length)
     EXEC.sel=(R.points.find(p=>p.present)||R.points[0]).coord;
+  buildPopulate(s,coord);
   renderExec();}
 
 function renderExec(){
   const {R}=EXEC;
   const nOut=Object.keys(R.result).length;
+  // A Populate with a mutable rank is a fold over the points: each round
+  // sees the fiber the round before left, so its points are not independent.
+  const P=EXEC.s.populate;
   $('execsub').textContent=
     '— '+R.points.length+(R.points.length===1?' point':' points')+
-    ' in the iteration space, each computed independently of the others; '+nOut+
+    ' in the iteration space, '+
+    (P?'each mapped independently of the others; Populate then takes the '+
+       P.rounds.length+' that hold a value one round at a time; '
+      :'each computed independently of the others; ')+nOut+
     (nOut===1?' produced a value':' produced values');
   writeSpaceNote(); renderPoint();}
 
@@ -1047,6 +1082,7 @@ function renderPoint(clicked){
         '<b>absent</b> rather than stored. This is the rule that lets a '+
         'saturated edge drop out of an intersect without a positivity guard.'+
         '</div>' : '')+
+    populateNote(EXEC.s,EXEC.sel)+
     '</div>');
 
   if(R.note)h.push('<div class="note">'+R.note+'</div>');
@@ -1198,6 +1234,9 @@ function miniGrid(name,dict,mark,cls,pick,vars,rankOverride){
     else td.textContent=val===true?'T':fmt(val);
     if(mark.has(key))td.classList.add(cls);
     if(mark.fiber&&mark.fiber.has(key))td.classList.add('fiber');
+    // Deleted in this round of Populate: empty afterwards, and marked.
+    if(mark.del&&mark.del.has(key)){td.classList.remove('abs');
+      td.classList.add('del');td.textContent='×';}
     if(pick){td.classList.add('pick');td.dataset.coord=key;
       td.title='Follow '+shownName(name)+'['+key+']';
       td.onclick=()=>pick(key);}
@@ -1472,9 +1511,193 @@ function renderTensors(members,shown){
   const outRanks=(R.einsum.output_ranks||[]).map(rankNameOf);
   strip.appendChild(tcard(capOf(R.output,outRanks,s.iteration),
     miniGrid(R.output,R.result,new Set([EXEC.sel]),'wr',
-             k=>{EXEC.sel=k;writeSpaceNote();renderPoint();},
+             k=>{EXEC.sel=k;writeSpaceNote();renderPoint();showRoundOf(k);},
              dataVars(R.output,outRanks)),
     ' out'));}
+
+/* ===================================================================
+   Populate, round by round (paper 5.8, 6.6 and Inset 4).
+
+   A Populate with a mutable rank (`⋘_{v*} 𝟙(op)`) does not write each
+   point's value to its own coordinate. It takes the Reduce Temporary's
+   elements one at a time -- one ROUND per iteration-space point -- and for
+   each: selects the mutable fiber the element belongs to, hands that fiber
+   and the element to the coordinate operator, and applies the write-del set
+   it returns. Each round starts from the fiber the previous one left.
+
+   Everything drawn here is step.populate, which edge-core-ir's evaluator
+   recorded while it ran: the pre-state S, the write set W, the delete set D,
+   the fiber afterwards, and that it checked W ∩ (dom(S) ∪ D) = ∅ against
+   the pre-state. The page looks rounds up; it never decides what an
+   operator keeps.
+   =================================================================== */
+let POP=null;
+
+function buildPopulate(s,coord){
+  const P=s&&s.populate;
+  if(!P||!P.rounds.length){POP=null;$('popbox').style.display='none';return;}
+  $('popbox').style.display='';
+  POP={s,P,r:0};
+  if(coord!==undefined&&coord!==null){
+    const k=P.rounds.findIndex(x=>x.coord===String(coord));
+    if(k>=0)POP.r=k;}
+  renderPopulate();}
+
+function goRound(k){
+  if(!POP)return;
+  POP.r=Math.max(0,Math.min(POP.P.rounds.length-1,k));renderPopulate();}
+// The round that brought a coordinate, if one did.
+function showRoundOf(coord){
+  if(!POP)return;
+  const k=POP.P.rounds.findIndex(x=>x.coord===String(coord));
+  if(k>=0)goRound(k);}
+$('popprev').onclick=()=>goRound(POP.r-1);
+$('popnext').onclick=()=>goRound(POP.r+1);
+
+function scheduleText(P){
+  return P.schedule.kind==='shuffled'
+    ?'a shuffled schedule (seed '+P.schedule.seed+')'
+    :'the sequential schedule (coordinates in sorted order)';}
+
+// {coord: value} as a set, for a line of text.
+function setText(cells,withValues){
+  const keys=Array.isArray(cells)?cells:Object.keys(cells);
+  if(!keys.length)return '∅';
+  return '{ '+keys.map(c=>'['+c+']'+(withValues&&!Array.isArray(cells)
+    ?' = '+fmt(cells[c]):'')).join(', ')+' }';}
+
+// What a ranking operator ranks by, from its name: the `-val` operators
+// rank data values, the `-coord` operators the coordinate itself.
+function rankedBy(name){
+  if(/[-_]val/.test(name||''))return 'value';
+  if(/[-_]coord/.test(name||''))return 'coordinate';
+  return null;}
+
+function populateNote(s,coord){
+  const P=s.populate; if(!P)return '';
+  const k=P.rounds.findIndex(x=>x.coord===String(coord));
+  if(k<0)return '<div class="note">No value reached Populate for this '+
+    'coordinate, so no round ran for it.</div>';
+  const f=EdgeDisplay.candidateFate(P,k);
+  return '<div class="note">The value computed here is a candidate for '+
+    'Populate, which took it in round '+(k+1)+' of '+P.rounds.length+' and '+
+    (f.written?'wrote it':'did not write it')+
+    (f.deletedIn!==null?'; round '+(f.deletedIn+1)+' deleted it':'')+
+    '. See <i>Populate, round by round</i> above.</div>';}
+
+function renderPopulate(){
+  const {s,P,r}=POP, R=P.rounds[r], F=P.fibers[R.fiber];
+  const out=s.output, op=P.operator;
+  $('popsub').innerHTML='— <span class="op">⋘<sub>'+P.mutable.map(v=>v+'*').join(',')+
+    '</sub> 𝟙('+EdgeDisplay.esc(op)+')</span> one round per Reduce Temporary '+
+    'element, in the order '+scheduleText(P)+' handed them out';
+  $('popno').textContent='round '+(r+1)+' of '+P.rounds.length;
+  $('popprev').disabled=r===0; $('popnext').disabled=r===P.rounds.length-1;
+
+  // ---- the three states, on the output's own axes ----
+  const strip=$('popstrip'); strip.innerHTML='';
+  const outRanks=(s.exec.einsum.output_ranks||[]).map(rankNameOf);
+  const vars=dataVars(out,outRanks);
+  const fiberSet=new Set(F.loc);
+  const arrow=()=>strip.appendChild(Object.assign(document.createElement('div'),
+    {className:'arrow',textContent:'→'}));
+  const cap=(what)=>what+': '+capOf(out,outRanks.map(
+    v=>P.mutable.includes(v)?v+'*':v),s.iteration);
+  const card=(what,cells,mark,cls,extra)=>{
+    mark.fiber=fiberSet;
+    const c=tcard(cap(what),miniGrid(out,cells,mark,cls,showRoundOf,vars),extra);
+    strip.appendChild(c); return c;};
+  // The Reduce Temporary: every element Populate is handed, this round's lit.
+  const cands={}; P.rounds.forEach(x=>{cands[x.coord]=x.value;});
+  const red=tcard('Reduce Temporary: the candidates',
+    miniGrid('__redtmp',cands,Object.assign(new Set([R.coord]),{fiber:fiberSet}),
+             'rd',showRoundOf,vars,dataRankNames(out)),' redtmp');
+  strip.appendChild(red); arrow();
+  card('Pre-state S',EdgeDisplay.outputAt(P,s.state[out],r,'pre'),new Set(),'rd',' prestate');
+  arrow();
+  card('After round '+(r+1),EdgeDisplay.outputAt(P,s.state[out],r,'post'),
+    Object.assign(new Set(Object.keys(R.W)),{del:new Set(R.D)}),'wr',' poststate');
+
+  // ---- what the round did ----
+  const sets=EdgeDisplay.roundSets(R);
+  const wrote=sets.W.length, deleted=sets.D.length;
+  const by=P.free?null:rankedBy(op);
+  const held=Object.keys(R.pre);
+  let decision;
+  if(wrote||deleted)
+    decision=(wrote?'Write '+sets.W.map(c=>'['+c+']').join(', '):'')+
+      (wrote&&deleted?'; ':'')+
+      (deleted?'Delete '+sets.D.map(c=>'['+c+']').join(', '):'');
+  else decision='no Write and no Delete: the fiber is left as it is';
+  let ranked='';
+  if(by==='value')
+    ranked='<div class="opnd">ranked by value: incoming ['+R.coord+'] = <span class="v">'+
+      fmt(R.value)+'</span>'+(held.length?' against '+held.map(
+        c=>'['+c+'] = <span class="v">'+fmt(R.pre[c])+'</span>').join(', ')
+        :' against an empty fiber')+'</div>';
+  else if(by==='coordinate')
+    ranked='<div class="opnd">ranked by coordinate: incoming ['+R.coord+']'+
+      (held.length?' against '+held.map(c=>'['+c+']').join(', ')
+                  :' against an empty fiber')+'</div>';
+  const point=Object.entries(R.point).map(([v,c])=>'<b>'+v+'</b> = '+c).join('&nbsp;&nbsp;');
+  const rows=[
+    ['Round '+(r+1),'iteration-space point '+point],
+    ['Incoming','Reduce Temporary element at ['+R.coord+'], value <span class="v">'+
+      fmt(R.value)+'</span>'],
+    ['Mutable fiber',shownName(out)+'['+R.fiber+'] — '+F.loc.length+
+      ' locations (Loc), '+held.length+' occupied'],
+    ['Pre-state','dom(S) = '+setText(R.pre,true)],
+    ['Coordinate operator','<span class="op cp">'+EdgeDisplay.esc(op)+'</span> '+
+      (P.free?'<span class="pill free">free choice</span>'
+             :'<span class="pill yes">ranking operator</span>')+
+      ranked+'<div class="opnd">write-del set: '+decision+
+      ' <span style="color:#aaa">('+(R.writeDelSize-R.writeDel.length)+
+      ' of '+R.writeDelSize+' locations None)</span></div>'],
+    ['Write set','W = '+setText(R.W,true)+
+      (wrote?' <span style="color:#aaa">— value from compute operator '+
+        EdgeDisplay.esc(P.compute||'pass-through')+'</span>':'')],
+    ['Delete set','D = '+setText(R.D)],
+    ['Constraint','<span id="popcheck" class="pill '+(R.checked?'yes':'no')+'">'+
+      'W ∩ (dom(S) ∪ D) = ∅ '+(R.checked?'✓':'not recorded')+'</span> '+
+      '<span style="color:#888">writes are checked against the pre-state; '+
+      'the evaluator stops the run on a violation</span>'],
+    ['After the round',setText(R.post,true)]];
+  const h=['<table class="deriv">'+rows.map(([k,v])=>
+    '<tr><td class="k">'+k+'</td><td class="mono">'+v+'</td></tr>').join('')+'</table>'];
+
+  // ---- every candidate of this fiber, in the order offered ----
+  const fate=(k)=>{
+    const f=EdgeDisplay.candidateFate(P,k);
+    return {f,now:P.rounds[k].W[P.rounds[k].coord]!==undefined?'Write':'None',
+      end:f.kept?'held at the end':f.deletedIn!==null
+        ?'deleted in round '+(f.deletedIn+1):'never written'};};
+  h.push('<div class="step" style="margin-top:12px"><h4>Candidates of fiber '+
+    shownName(out)+'['+R.fiber+'], in the order offered</h4>'+
+    '<table class="popc" id="popcands"><tr><th>round</th><th>candidate</th>'+
+    '<th>value</th><th>its own round</th><th>this fiber, finally</th></tr>'+
+    F.rounds.map(k=>{const x=P.rounds[k], g=fate(k);
+      return '<tr data-round="'+k+'" class="'+(k===r?'cur ':'')+(g.f.kept?'won':'')+
+        '"><td>'+(k+1)+'</td><td>['+x.coord+']</td><td>'+fmt(x.value)+'</td><td>'+
+        g.now+'</td><td>'+g.end+'</td></tr>';}).join('')+'</table>'+
+    (P.free
+      ? '<div class="note" id="popfree"><b>'+EdgeDisplay.esc(op)+'</b> is a free choice: '+
+        'it names no ranking, so it runs as <b>select-any</b>, which writes the '+
+        'first candidate to arrive in an empty fiber and nothing after. '+
+        (F.rounds.length>1
+          ? 'All '+F.rounds.length+' candidates above were eligible; ['+
+            P.rounds[F.rounds[0]].coord+'] is held only because this run used '+
+            scheduleText(P)+', which offered it first. A different schedule may hold a different one.'
+          : 'Only one candidate reached this fiber, so nothing was chosen here.')+
+        ' The answer check also runs shuffled schedules.</div>'
+      : '<div class="note" id="popranked"><b>'+EdgeDisplay.esc(op)+'</b> is a ranking '+
+        'operator, part of the algorithm: each round ranks the incoming element '+
+        'against what the fiber holds'+(by?' by '+by:'')+', and the evaluator '+
+        'breaks a tie by coordinate, so the order offered does not change '+
+        'what is held at the end.</div>')+
+    '</div>');
+  $('popbody').innerHTML=h.join('');
+  $('popcands').querySelectorAll('tr[data-round]').forEach(tr=>{
+    tr.onclick=()=>goRound(+tr.dataset.round);});}
 
 function rankNameOf(r){
   if(!r)return '?';

@@ -17,8 +17,19 @@ evaluator, checks the answers, and writes one static `index.html`.
   research aim is systems/PL (an untrusted AI front end kept honest by a
   reference interpreter), not HCI.
 
+The users are **outside authors** working with an AI agent: they write the
+spec with the agent, verify it with this toolchain, and use the page to see
+how it actually runs. The agent is untrusted, so the tool enforces every
+contract; a rule that lives only in the skill is not enforced.
+
 Why, how it works, every design decision and whose it was, and what we
-learned: [docs/DESIGN.md](docs/DESIGN.md).
+learned: [docs/DESIGN.md](docs/DESIGN.md). It also holds, from the
+2026-11-16 review:
+- decisions 38 to 48 (agreed) and 49 to 56 (**proposals**: do not build one
+  until Sanjana has said yes to it);
+- the review of the page and the site, and the target design for both;
+- the **build plan**, phases 0 to 12, each with a pass/fail test. Work the
+  phases in order and read the plan before starting any of them.
 
 ## Workflow
 
@@ -47,10 +58,20 @@ learned: [docs/DESIGN.md](docs/DESIGN.md).
 - `python3 -m edge_workbench verify-instance examples/<alg> <k>` — rerun one random instance
 - `npm test` — domain views, every example page, pytest (needs `npm install` for jsdom)
 - edge-core-ir is found via `EDGE_IR_REPO`, a checkout beside this repo, or `~/Projects/edge-core-ir`
+- To look at a page, render it: `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  --headless=new --window-size=1440,1700 --virtual-time-budget=6000 --screenshot=<out.png>
+  file://<dir>/index.html`, and again at `--window-size=390,1600`. To reach a later step,
+  screenshot a temporary copy with `go(n)` appended in a script. The site needs a server:
+  `python3 -m http.server` in `~/Projects/edge-algorithms/_site` (a build, possibly stale).
 
-Examples (approved, except bubble-sort, which waits for its approval): bellman-ford, direction-optimizing-bfs (hybrid cascade,
+Examples (all approved and committed): bellman-ford, direction-optimizing-bfs (hybrid cascade,
 α = 15, β = 18), maximum-flow, set-cover, breadth-first-search (port of the
 site tutorial), bfs-from-name (CLRS §22.2, written by the skill), bubble-sort.
+
+Known state (2026-11-16): one test fails,
+`tests/test_robustness.py::test_a_value_equal_to_empty_is_reported` (the
+instance check does not report a stored value equal to the empty value).
+There is no CI.
 
 ## Rules
 
@@ -62,6 +83,10 @@ site tutorial), bfs-from-name (CLRS §22.2, written by the skill), bubble-sort.
 - **edge-core-ir belongs to Toluwa.** Do not edit it; write gaps up in
   [docs/issues-for-edge-core-ir.md](docs/issues-for-edge-core-ir.md). Exception:
   issues 1, 2, 7, 8, 9, 10 and 11 are fixed locally, uncommitted, in her checkout.
+  Toluwa has not reviewed them (2026-11-16), so their semantics are ours, not
+  yet the reference's; they go upstream as one pull request per issue
+  (DESIGN.md, 39). Nothing pins a commit yet: every example depends on that
+  working tree, so never pull, stash, reset or switch branches there.
 - **Her evaluator is the only evaluator.** The page replays its trace; nothing
   in this repo evaluates Einsums, in Python or JS.
 - **Fixes go in the tool, not in one page.** Every fix should help future algorithms.
@@ -81,8 +106,18 @@ site tutorial), bfs-from-name (CLRS §22.2, written by the skill), bubble-sort.
 - **Delegate the hardest, highest-priority work to Fable subagents**
   (`model: "fable"`), with a self-contained brief; review their report and
   check their claims before relaying.
+- **The page is for a newcomer.** Every string on it is written for a reader
+  who has not seen EDGE, in the paper's terms: "generation", never
+  "iteration"; "round" only for a Populate. Evaluator vocabulary belongs in
+  the deepest level only. The page hides nothing silently: a folded step is
+  counted and can be opened. The plain explanation is written once, in the
+  tutorial, and the page reads it (DESIGN.md, 48 and "Target design").
+- **The tutorials on the site are mostly Toluwa's.** A change to the site's
+  layout or to a tutorial's shape needs her agreement.
 - **Do not commit or push.** Leave changes in the working tree.
 - **Ask, don't assume.** Questions and brainstorming are answered in chat, not in files.
+  A decision goes into DESIGN.md's table when Sanjana asks for it there, with
+  whose it was; one she has not agreed to is marked "Proposed".
 
 ## References
 

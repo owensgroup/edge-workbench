@@ -272,30 +272,6 @@ class Renderer:
         }
         return labelled & transparent
 
-    def _infix_labels(self, expr: Any, specs: list[dict]) -> dict:
-        """label -> comparison glyph, for binaries comparing an occupancy."""
-        comparisons = {"eq": r"\equiv", "equals": r"\equiv", "ne": r"\neq",
-                       "lt": "<", "le": r"\le", "gt": ">", "ge": r"\ge"}
-        by_label = {s.get("label"): s for s in specs if s.get("kind") == "map"}
-        out = {}
-
-        def walk(n):
-            if isinstance(n, dict):
-                if n.get("kind") == "binary" and "occupancy" in (
-                        n["lhs"].get("kind"), n["rhs"].get("kind")):
-                    name = _op_name((by_label.get(n.get("label")) or {})
-                                    .get("compute_op") or {})
-                    if name in comparisons:
-                        out[n["label"]] = comparisons[name]
-                for v in n.values():
-                    walk(v)
-            elif isinstance(n, list):
-                for v in n:
-                    walk(v)
-
-        walk(expr)
-        return out
-
     def expression(self, n: dict, multi: bool, wrappers: set = frozenset(),
                    gen_literal: Any = None) -> str:
         if n.get("kind") == "binary" and n.get("label") in wrappers:
@@ -313,8 +289,6 @@ class Renderer:
             # here and not in `rank`, which handles subscripts. Exact cover's
             # stamp sigma(d, r) = d*|R| + r is the first cascade to use one.
             return self.rank(n["expr"])
-        if kind == "occupancy":
-            return r"\lVert " + self.projection(n["operand"]) + r" \rVert"
         if kind == "unary":
             name = _op_name(n["op"])
             inner = self.expression(n["operand"], multi, wrappers, gen_literal)
@@ -332,9 +306,6 @@ class Renderer:
         if kind == "binary":
             lhs = self.expression(n["lhs"], multi, wrappers, gen_literal)
             rhs = self.expression(n["rhs"], multi, wrappers, gen_literal)
-            infix = getattr(self, "_infix", {}).get(n.get("label"))
-            if infix:
-                return f"{lhs} {infix} {rhs}"
             # The label ties this operator to its spec. It is only written
             # when there is more than one spec to tell apart.
             lab = rf"\cdot^{n['label']}" if multi else r"\cdot"
@@ -349,10 +320,8 @@ class Renderer:
         quantifiers. Populate is written with its own operator, below.
         """
         wrappers = self._wrapper_label(specs)
-        infix = getattr(self, "_infix", {})
         maps = [s for s in specs
-                if s.get("kind") == "map" and s.get("label") not in wrappers
-                and s.get("label") not in infix]
+                if s.get("kind") == "map" and s.get("label") not in wrappers]
         reduces = [s for s in specs if s.get("kind") == "reduce"]
         multi = len(maps) > 1
         out = []
@@ -465,13 +434,8 @@ class Renderer:
 
         specs = e.get("specs", [])
         wrappers = self._wrapper_label(specs)
-        # A comparison against an occupancy is written infix, as the paper
-        # writes it in stopping conditions: `||ActiveCol_{i+1}|| == 0`. Its
-        # Map is then shown in the expression rather than after `::`.
-        self._infix = self._infix_labels(e["expression"], specs)
         multi = len([s for s in specs if s.get("kind") == "map"
-                     and s.get("label") not in wrappers
-                     and s.get("label") not in self._infix]) > 1
+                     and s.get("label") not in wrappers]) > 1
         gen_literal = next(
             (r["value"] for pos, r in enumerate(ranks)
              if r.get("kind") == "literal"

@@ -105,14 +105,18 @@ WHAT TO PRODUCE
 1. `{names['builder']}` -- REQUIRED. Constructs an `edge_ir.ir.program.Program`
    and, under `if __name__ == "__main__":`, writes
    `program.model_dump_json(indent=2)` to stdout. It must run with only
-   edge-core-ir on the path.
+   edge-core-ir and `edge_workbench` (for `edge_workbench.macro`) on the path.
 
 2. `{names['functions']}` -- ONLY IF the spec names an operator the default
    registry does not have (a hyphenated name like `pick-admissible-edge`).
-   Define `{names['registry']}()` returning the default registry plus those
-   names, as the max-flow translation below does. Alias an existing
+   Define `{names['registry']}()` returning
+   `edge_workbench.operators.base_registry()` (edge-core-ir's default
+   registry plus `select-any` and `floor`) plus those names; not
+   edge-core-ir's `default_registry()`, which has neither. Alias an existing
    implementation where the spec's meaning matches one; `1(name)` in a
-   populate means ANY candidate, which is `select-any`.
+   populate means ANY candidate, an alias of `select-any`:
+   `return alias(base_registry(), "pick-admissible-edge")`, importing both
+   from `edge_workbench.operators`.
 
 RULES -- each one is checked
 
@@ -127,7 +131,7 @@ RULES -- each one is checked
    labelled parenthesized parts of the same Einsum -- AnonymousTensor with
    BinaryApp labels, specs flat on the Einsum -- as max-flow's E06 and E11
    do. A unary on an expression is the paper's degenerate Map against 1
-   (merge take_left, compute = the unary); ||T|| is `Occupancy`; a shape
+   (merge take_left, compute = the unary); a shape
    read as a value, like `|R|`, is
    `RankValue(expr=RankConstantShapeSym(name="|R|"))`, never a new input
    tensor. Put a
@@ -190,10 +194,10 @@ RULES -- each one is checked
 
    MACROS AND CONDITIONAL CASCADES. A `- Macro NAME(inputs) -> outputs`
    section is a template: build it once as
-   `edge_ir.ir.macro.MacroDefinition(name, inputs, outputs, body)`, its body
+   `edge_workbench.macro.MacroDefinition(name, inputs, outputs, body)`, its body
    written exactly as the section writes it (formal names and all, one
    Einsum per label, in label order), and get an invocation's Einsums from
-   `edge_ir.ir.macro.expand(defn, actual_inputs, actual_outputs)`. A
+   `edge_workbench.macro.expand(defn, actual_inputs, actual_outputs)`. A
    labelled multi-output statement
      (Out1_{{...}}, Out2_{{...}}) = cases:
          NAME-A(args...)   if <condition>

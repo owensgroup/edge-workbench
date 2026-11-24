@@ -170,7 +170,7 @@ def program() -> dict:
     r = subprocess.run(
         [sys.executable, "build_direction_optimizing_bfs_program.py"],
         cwd=spec, capture_output=True, text=True,
-        env=dict(os.environ, PYTHONPATH=os.pathsep.join([str(root), str(spec)]),
+        env=dict(os.environ, PYTHONPATH=os.pathsep.join([str(root), str(ROOT), str(spec)]),
                  PYTHONDONTWRITEBYTECODE="1"))
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)

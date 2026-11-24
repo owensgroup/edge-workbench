@@ -39,8 +39,6 @@ def _projections(node: Any, out: list[dict]) -> None:
     if isinstance(node, dict):
         if node.get("kind") == "input" and "proj" in node:
             out.append(node["proj"])
-        if node.get("kind") == "occupancy" and "operand" in node:
-            out.append(node["operand"])
         for value in node.values():
             _projections(value, out)
     elif isinstance(node, list):

@@ -28,6 +28,7 @@ import importlib.util
 import json
 import sys
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -122,8 +123,8 @@ def host_inputs(program: dict, instance: dict) -> tuple[dict, dict]:
 
 
 def _registry(spec: Path):
-    """The algorithm's own operator registry, else the default one."""
-    from edge_ir.udf.builtins import default_registry
+    """The algorithm's own operator registry, else the workbench's base one."""
+    from edge_workbench.operators import base_registry
 
     for path in sorted(spec.glob("*_functions.py")):
         mod_spec = importlib.util.spec_from_file_location(path.stem, path)
@@ -134,7 +135,7 @@ def _registry(spec: Path):
             found = getattr(mod, name, None)
             if found is not None:
                 return found() if callable(found) else found
-    return default_registry()
+    return base_registry()
 
 
 # ---------------------------------------------------------- recording ---
@@ -150,18 +151,13 @@ def _recording(records: list[dict]):
     from edge_ir.evaluator import program as ev_program
 
     original = ev_cascade.evaluate_einsum
-    # Populate's rounds are recorded by the evaluator itself, when it can
-    # (edge-core-ir local patch, issue 11); nothing here works them out.
-    import inspect
-
-    extra = ({"record_populate": True} if "record_populate"
-             in inspect.signature(original).parameters else {})
 
     def recorded(einsum, *, env, pinned=None, schedule=None):
         before = _snapshot(env)
-        res = original(einsum, env=env, pinned=pinned, schedule=schedule,
-                       **extra)
+        with _watching_populate(einsum, env) as rounds:
+            res = original(einsum, env=env, pinned=pinned, schedule=schedule)
         after = _snapshot(env)
+        _finish_rounds(rounds, env.tensors[einsum.output_tensor])
         inner_map = _inner_map(einsum, res, env, pinned)
         written_gen = None
         if einsum.output_ranks:
@@ -176,6 +172,7 @@ def _recording(records: list[dict]):
         records.append({"einsum": einsum, "pinned": dict(pinned or {}),
                         "written_gen": written_gen,
                         "result": res, "before": before, "after": after,
+                        "populate_rounds": rounds,
                         "inner_map": inner_map, "env": env})
         return res
 
@@ -186,6 +183,100 @@ def _recording(records: list[dict]):
     finally:
         ev_cascade.evaluate_einsum = original
         ev_program.evaluate_einsum = original
+
+
+# ------------------------------------------------------ populate rounds ---
+
+@dataclass
+class PopulateRound:
+    """What one round of Populate did (paper §6.6.1, Inset 4): one incoming
+    Reduce Temporary element and the mutable fiber it belongs to.
+
+    Recorded by watching the coordinate operator the evaluator calls once per
+    round, through the registry the workbench supplies; edge-core-ir is not
+    changed for it (docs/evaluator-needs.md). The evaluator still checks
+    W ∩ (dom(S) ∪ D) = ∅ and raises on a violation, so a round recorded in
+    an Einsum that returned passed that check.
+    """
+
+    point: tuple
+    axes: tuple
+    output_coord: tuple
+    value: Any
+    fiber_key: tuple
+    mutable_positions: tuple
+    locations: tuple
+    pre_state: dict
+    write_del: list = field(default_factory=list)
+    deletes: list = field(default_factory=list)
+    writes: dict = field(default_factory=dict)
+    post_state: dict = field(default_factory=dict)
+    constraint_checked: bool = False
+
+
+@contextmanager
+def _watching_populate(einsum, env):
+    """Swap in a recording copy of this Einsum's coordinate operator while
+    the evaluator runs it, and put the original back."""
+    from edge_ir.evaluator.context import PopulateAction
+    from edge_ir.ir.actions import PopulateSpec
+    from edge_ir.udf import UdfCategory
+    from edge_ir.udf.decl import UdfImpl
+
+    rounds: list[PopulateRound] = []
+    spec = next((s for s in einsum.specs if isinstance(s, PopulateSpec)), None)
+    registry = env.functions
+    if spec is None or not spec.rank_list or spec.coord_op is None or \
+            not registry.has(UdfCategory.COORDINATE, spec.coord_op.name):
+        yield rounds
+        return
+    name = spec.coord_op.name
+    decl = registry.decl(UdfCategory.COORDINATE, name)
+    inner = registry.impl(UdfCategory.COORDINATE, name)
+
+    class Watched(UdfImpl):
+        def call(self, *args, ctx=None):
+            fiber, cs_z, dv_r = args
+            out = list(inner.call(*args, ctx=ctx))
+            rounds.append(PopulateRound(
+                point=tuple(getattr(ctx, "point", ()) or ()),
+                axes=tuple(getattr(ctx, "axes", ()) or ()),
+                output_coord=tuple(cs_z),
+                value=dv_r,
+                fiber_key=tuple(getattr(ctx, "fiber_key", ()) or ()),
+                mutable_positions=tuple(getattr(ctx, "mutable_positions", ())
+                                        or ()),
+                locations=tuple(e.coord for e in fiber),
+                pre_state={e.coord: e.value for e in fiber if e.present},
+                write_del=[(tuple(c), PopulateAction(a).value) for c, a in out],
+            ))
+            return out
+
+    registry.register(decl, Watched(), allow_override=True)
+    try:
+        yield rounds
+    finally:
+        registry.register(decl, inner, allow_override=True)
+
+
+def _finish_rounds(rounds: list[PopulateRound], output) -> None:
+    """D, W and each round's post-state, from what the operator returned.
+
+    A round's post-state is the fiber the next round on the same fiber was
+    handed, or, for the last one, that fiber in the Einsum's output. A write
+    whose value equals the output's empty value leaves the location absent
+    (a stored empty value is absent), so W shows the empty value there.
+    """
+    final = {tuple(c): v for c, v in output.items()}
+    for k, r in enumerate(rounds):
+        r.deletes = [c for c, a in r.write_del if a == "Delete"]
+        nxt = next((q for q in rounds[k + 1:] if q.fiber_key == r.fiber_key),
+                   None)
+        r.post_state = (dict(nxt.pre_state) if nxt is not None else
+                        {c: final[c] for c in r.locations if c in final})
+        r.writes = {c: r.post_state.get(c, output.empty_value)
+                    for c, a in r.write_del if a == "Write"}
+        r.constraint_checked = True
 
 
 # -------------------------------------------------------------- steps ---
@@ -318,18 +409,6 @@ def _rank_values(expr) -> list:
     return []
 
 
-def _occupancies(expr) -> list:
-    """Every ||T|| in an Einsum, left to right."""
-    kind = getattr(expr, "kind", None)
-    if kind == "occupancy":
-        return [expr]
-    if kind == "binary":
-        return _occupancies(expr.lhs) + _occupancies(expr.rhs)
-    if kind == "anonymous":
-        return _occupancies(expr.expression)
-    return []
-
-
 def _exec_record(rec: dict, node_json: dict, gen_tensors: set[str],
                  alias: dict) -> dict:
     """What the page's "how this value is computed" panel shows for one Einsum
@@ -379,20 +458,6 @@ def _exec_record(rec: dict, node_json: dict, gen_tensors: set[str],
     else:
         parts = [(None, einsum.expression, res)]
 
-    def counted(node, bound):
-        """||T||: what it counts, so the page can draw T and not just a number.
-        Its subscripts are read at this point; the ranks it leaves free are
-        the ones counted over."""
-        proj = node.operand
-        given = tuple(evaluate_rank_expression(
-            r, bound, shape_env=env.shape_env, registry=env.functions)
-            for r in proj.ranks)
-        cells = [",".join(str(c) for c in coord[len(given):])
-                 for coord in before.get(proj.tensor, {})
-                 if coord[:len(given)] == given]
-        return {"tensor": alias.get(proj.tensor, proj.tensor), "op": "occupancy",
-                "ranks": [_rank_text(r.model_dump()) for r in proj.ranks],
-                "cells": cells, "present": True, "value": len(cells)}
     points = []
     produced_keys = set()
     out_space = env.spaces.get(out_name)
@@ -402,7 +467,6 @@ def _exec_record(rec: dict, node_json: dict, gen_tensors: set[str],
         iter_vars += [a for a in space.axes if a not in iter_vars]
         projections = list(input_projections(expression))
         rank_values = _rank_values(expression)
-        occupancies = _occupancies(expression)
         for p in space.points:
             bound = space.point_map(p)
             proj = einsum_projection(list(einsum.output_ranks), bound, p,
@@ -420,7 +484,6 @@ def _exec_record(rec: dict, node_json: dict, gen_tensors: set[str],
                 "present": present,
                 "value": res.map_tmp.get(p) if present else None,
                 "prov": {"reads": [read(pr, bound) for pr in projections]
-                         + [counted(oc, bound) for oc in occupancies]
                          + [{"rank": _rank_text(rv.expr.model_dump()),
                              "scalar": True, "present": True,
                              "value": evaluate_rank_expression(
@@ -470,8 +533,8 @@ def _exec_record(rec: dict, node_json: dict, gen_tensors: set[str],
 def _populate_record(rec: dict, node_json: dict, gen_tensors: set[str],
                      alias: dict, cascade: dict, schedule: dict | None) -> dict | None:
     """What each round of a Populate with a mutable rank did, as the
-    evaluator recorded it (`EinsumResult.populate_rounds`): nothing here is
-    computed, only renamed for the page.
+    driver recorded it (`PopulateRound`): nothing here is computed, only
+    renamed for the page.
 
     A round (paper, Inset 4) is one point of the iteration space at which
     Populate runs: one incoming Reduce Temporary element and the mutable
@@ -482,7 +545,7 @@ def _populate_record(rec: dict, node_json: dict, gen_tensors: set[str],
     per fiber. None when the evaluator recorded no rounds (assignment, or an
     edge-core-ir without the recording).
     """
-    rounds = getattr(rec["result"], "populate_rounds", None)
+    rounds = rec.get("populate_rounds")
     if not rounds:
         return None
     einsum = rec["einsum"]

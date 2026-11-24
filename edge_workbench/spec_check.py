@@ -249,7 +249,7 @@ def operator_names(program: dict, functions_py: Path | None) -> list[str]:
     """Every operator the program names is implemented somewhere."""
     _import_edge_ir()
     from edge_ir.ir.program import Program
-    from edge_ir.udf.builtins import default_registry
+    from edge_workbench.operators import base_registry
 
     try:
         from edge_ir.validator import check_udf_names
@@ -260,7 +260,7 @@ def operator_names(program: dict, functions_py: Path | None) -> list[str]:
     except Exception:
         return []
 
-    registry = default_registry()
+    registry = base_registry()
     if functions_py is not None and functions_py.exists():
         registry = _registry_from(functions_py) or registry
     return [f"operator not implemented: {f}"

@@ -39,44 +39,16 @@ The reverse order hits a circular import.
 
 from __future__ import annotations
 
-import edge_ir.evaluator  # noqa: F401  (must precede edge_ir.udf)
-from edge_ir.udf import FunctionRegistry, UdfCategory, UdfDecl, default_registry
+from edge_workbench.operators import alias, base_registry
 
 PICK_ADMISSIBLE_EDGE = "pick-admissible-edge"
 
 
-def _alias(
-    registry: FunctionRegistry,
-    category: UdfCategory,
-    existing: str,
-    name: str,
-    doc: str,
-) -> None:
-    """Register ``name`` with the implementation already bound to ``existing``."""
-    decl = registry.decl(category, existing)
-    registry.register(
-        UdfDecl(
-            name=name,
-            category=category,
-            arity=decl.arity,
-            wants_context=decl.wants_context,
-            doc=doc,
-        ),
-        registry.impl(category, existing),
-    )
-
-
-def maximum_flow_registry() -> FunctionRegistry:
-    """The default registry plus E10's two populate operators."""
-    registry = default_registry()
-    _alias(
-        registry,
-        UdfCategory.COORDINATE,
-        "select-any",
-        PICK_ADMISSIBLE_EDGE,
-        "E10 coordinate op: keep one admissible v per (i, u) fiber, ANY one. "
+def maximum_flow_registry():
+    """The workbench's base registry plus E10's populate operator."""
+    return alias(
+        base_registry(), PICK_ADMISSIBLE_EDGE,
+        doc="E10 coordinate op: keep one admissible v per (i, u) fiber, ANY one. "
         "Alias of select-any, because einsum.md writes 1(pick-admissible-edge) "
         "with no ranking. The route therefore varies with traversal order; "
-        "the answer does not.",
-    )
-    return registry
+        "the answer does not.")

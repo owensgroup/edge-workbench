@@ -323,7 +323,7 @@ def _run_builder(a: Author) -> tuple[dict | None, list[str]]:
     if root is None:
         return None, ["edge-core-ir not found; set EDGE_IR_REPO"]
     env = dict(os.environ,
-               PYTHONPATH=os.pathsep.join([str(root), str(a.spec)]))
+               PYTHONPATH=os.pathsep.join([str(root), str(ROOT), str(a.spec)]))
     r = subprocess.run([sys.executable, a.names["builder"]], cwd=a.spec,
                        capture_output=True, text=True, env=env, timeout=120)
     if r.returncode != 0:

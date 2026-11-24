@@ -587,7 +587,26 @@ def compare(md: Path, edge: Path) -> list[str]:
         out.append(f"stopping condition: tutorial {t.stopping}, einsum.edge "
                    f"{e.stopping}")
     out += _constants(md, edge)
+    out += occupancy_outside_stopping(e)
     return out
+
+
+def occupancy_outside_stopping(e: Sides) -> list[str]:
+    """`||T||` anywhere but a stopping condition.
+
+    EDGE allows occupancy only in a stopping condition (`<> : ||F_{i+1}|| == 0`,
+    paper Eq. 39d; edge-core-ir D5); Toluwa confirmed an Einsum may not use it
+    (2026-11-19). Say so here, in the author's terms, rather than letting the
+    builder fail on an IR node that does not exist.
+    """
+    statements = ([Line(x) for x in e.initialization] + list(e.cascade)
+                  + [ln for m in e.macros.values() for ln in m.cascade])
+    return [f"{ln.label or 'initialization'}: `{ln.text}` uses occupancy "
+            f"||...||, which EDGE allows only in a stopping condition (<> :). "
+            f"Write it as an OR-reduction over the ranks it counts, then a "
+            f"negation or comparison, and ask the author before changing "
+            f"their Einsum."
+            for ln in statements if "||" in ln.text]
 
 
 def _compare_cascades(tc: list[Line], ec: list[Line], what: str) -> list[str]:

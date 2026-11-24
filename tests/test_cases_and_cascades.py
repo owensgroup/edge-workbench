@@ -159,7 +159,7 @@ def program(tmp_path_factory) -> dict:
         (work / name).write_text(body)
     r = subprocess.run([sys.executable, "build_bubble_sort_program.py"],
                        cwd=work, capture_output=True, text=True,
-                       env=dict(os.environ, PYTHONPATH=str(root)))
+                       env=dict(os.environ, PYTHONPATH=os.pathsep.join([str(root), str(ROOT)])))
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 

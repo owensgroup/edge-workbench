@@ -117,8 +117,12 @@ Check each Einsum against this before checkpoint B. The issue numbers are in
 - **A tutorial with several cascades is one author directory per cascade.**
   `einsum.edge` names any cascade other than `edge_expression` with a
   `- Cascade: <name>` line (DOBFS bottom-up).
-- **Patched locally, not yet upstream**: occupancy `‖T‖` inside an Einsum
-  (issue 1), a reduce inside parentheses (issue 2), a reduce over an empty
+- **Occupancy `‖T‖` only in a stopping condition** (`⋄ : ‖F_{i+1}‖ ≡ 0`),
+  never inside an Einsum (Toluwa, 2026-11-19); `check` reports one. To use
+  "T is empty" mid-cascade, OR-reduce T over the ranks it would count into a
+  Boolean, then negate it, and ask the author before rewriting their Einsum.
+- **Patched locally, not yet upstream**: a reduce inside parentheses
+  (issue 2), a reduce over an empty
   fiber writing nothing (issue 7), case statements (issue 8), conditional
   cascades and macro expansion (issue 9), inner cascades (issue 10). They run
   on this machine; mention their use in the report.

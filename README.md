@@ -9,15 +9,35 @@ evaluator**, which is the source of truth for EDGE semantics. The workbench
 records what that evaluator computed and the page renders it; nothing is
 evaluated a second time, in the browser or anywhere else.
 
+## Setup
+
+Needs Python 3.10+, and `node` for the headless page checks only.
+
 ```
-npm install                                  # jsdom, for the headless page checks
-python3 -m edge_workbench check examples/maximum-flow   # writes examples/maximum-flow/index.html
-npm test                                     # domain views, every example page, pytest
+# edge-core-ir, beside this repo, on the branch the workbench runs on
+git clone -b fixes_for_edge_workbench https://github.com/edge-einsums/edge-core-ir.git
+git clone <this repo> edge-workbench
+cd edge-workbench
+pip install -e '.[oracles,dev]'   # scipy + networkx (verifiers), pytest
+npm install                       # jsdom, for the headless page checks
 ```
 
-Python 3.10+ and an [`edge-core-ir`](https://github.com/edge-einsums/edge-core-ir)
-checkout beside this one (or `EDGE_IR_REPO` pointing at it). `node` is needed
-only for the headless page checks.
+**Use the `fixes_for_edge_workbench` branch of edge-core-ir** (known good:
+`c8bcbdd`), not `main`. It adds what the examples need and upstream does not
+have yet: a reduce inside parentheses, a reduce over an empty fiber writing
+nothing, case statements, conditional cascades and inner cascades (issues 2,
+7, 8, 9 and 10 in [docs/issues-for-edge-core-ir.md](docs/issues-for-edge-core-ir.md)).
+Everything else the page needs (macro expansion, `select-any`, the record of
+each Populate round) is built here, around the evaluator
+([docs/evaluator-needs.md](docs/evaluator-needs.md)).
+They go upstream one pull request per issue; until then, on `main` most
+examples fail. The workbench finds edge-core-ir via `EDGE_IR_REPO`, then a
+checkout beside this repo, then `~/Projects/edge-core-ir`.
+
+```
+python3 -m edge_workbench check examples/maximum-flow   # writes examples/maximum-flow/index.html
+npm test                                                # domain views, every example page, pytest
+```
 
 ## The workflow
 
@@ -91,8 +111,11 @@ Coverage is the one that replaced comparing against a recording. Its failure
 mode is silent: an Einsum that never runs produces no wrong value and raises
 nothing, it just leaves a page whose step list looks complete. It works off
 the driver's per-IR-node tally rather than the emitted steps, because the two
-differ on purpose — initialization runs four Einsums and emits one step, and a
-lowered `cases` runs three and emits one.
+differ on purpose — initialization runs four Einsums and emits one step. A
+case statement is one Einsum whose arms are tallied separately: everything
+outside an arm must run on the worked example, and each arm (of a case
+statement or a conditional cascade) on the worked example or on one of the
+verifier's random instances.
 
 The answer check is the author's `verifier.py`, because only the algorithm
 knows what right means; the tool runs it on the worked example, the published
@@ -114,9 +137,16 @@ edge_workbench/        the tool. Contains no algorithm.
   render/      build_page.py, annotate.py, display.js (glyphs only; no evaluation)
   verifier.py, approval.py    the verifier contract and its approval
   rank_kinds.py, domain_shape.py    which picture a program gets
+  spec_surface.py   reads einsum.edge (labels, macros, constants)
+  publish.py        `publish`: copies a passing page to the site
 examples/<alg>/        tutorial .md, einsum.edge, verifier.py (+ verifier.lock);
                        `check` writes workbench/ and index.html beside them
 tests/                 generic gates
+.claude/skills/write-edge-tutorial/   the agent's skill (SKILL.md, rules.md)
+docs/                  DESIGN.md (decisions, build plan),
+                       issues-for-edge-core-ir.md (language questions only),
+                       evaluator-needs.md (what the page needs, built here),
+                       tutorial-notes/<alg>.md (questions for one tutorial)
 ```
 
 Adding an algorithm is adding a directory with those three files. The tool
@@ -128,6 +158,21 @@ A populate names a choice function the IR does not define. Some of those
 choices are genuinely free and some are the algorithm, and mapping a free one
 to a fixed rule would make the spec claim something it does not.
 
-Max-flow's `pick-admissible-edge` is free — `1(pick-admissible-edge)` says ANY
-admissible edge — so it runs seeded-random, seeded so a build is reproducible.
-An unmapped name stops the cascade rather than being guessed at.
+Ranking operators (`select-min-val`, `select-max-val`) are part of the
+algorithm: the better value wins, ties go to the lower coordinate, and the
+result does not depend on the schedule. Any other populate name is a free
+choice: max-flow's `pick-admissible-edge` says ANY admissible edge, so it runs
+as seeded `select-any` (the first arrival wins). The page shows the
+sequential schedule; the answer check also runs every free choice under
+shuffled schedules and requires the same answer from each. An unknown name
+stops the cascade rather than being guessed at.
+
+## Known limitations
+
+- `I` is hard-coded as the generational rank (undecided for SpMV).
+- Long runs (DOBFS, set-cover) show every step; choosing which to show is not
+  built yet.
+- set-cover's E02 writes an operation with no merge; giving it the paper's
+  default (pass-through) is not settled.
+- One test fails: `tests/test_robustness.py::test_a_value_equal_to_empty_is_reported`.
+- No CI.

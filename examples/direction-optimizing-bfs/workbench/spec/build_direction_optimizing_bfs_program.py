@@ -32,7 +32,7 @@ from edge_ir.ir.expr import (
     TensorProjection,
     UnaryApp,
 )
-from edge_ir.ir.macro import MacroDefinition, expand
+from edge_workbench.macro import MacroDefinition, expand
 from edge_ir.ir.op import (
     BuiltinComputeOp,
     BuiltinMergeOp,

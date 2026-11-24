@@ -1731,8 +1731,6 @@ function operandLine(p){
     return '<div class="opnd">( … )<sub>'+(p.boundTo||[]).join(',')+'</sub> = '+
       (p.present?'<span class="v">'+fmt(p.value)+'</span>'
                 :'<span class="abs">absent</span>')+'</div>';
-  if(p.op==='occupancy')
-    return '<div class="opnd">‖'+shownName(p.tensor)+'‖ <span style="color:#aaa">(entries it holds)</span> = <span class="v">'+fmt(p.value)+'</span></div>';
   if(p.op==='not')
     return '<div class="opnd">¬'+plain(p.inner)+' = '+
       (p.value?'<span class="v">true</span>':'<span class="abs">false</span>')+'</div>';

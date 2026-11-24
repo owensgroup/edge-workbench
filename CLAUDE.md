@@ -81,12 +81,21 @@ There is no CI.
   and the user explicitly says so. Show parenthesized parts as labelled
   sub-steps, never as new helper tensors. List any unavoidable change.
 - **edge-core-ir belongs to Toluwa.** Do not edit it; write gaps up in
-  [docs/issues-for-edge-core-ir.md](docs/issues-for-edge-core-ir.md). Exception:
-  issues 1, 2, 7, 8, 9, 10 and 11 are fixed locally, uncommitted, in her checkout.
-  Toluwa has not reviewed them (2026-11-16), so their semantics are ours, not
-  yet the reference's; they go upstream as one pull request per issue
-  (DESIGN.md, 39). Nothing pins a commit yet: every example depends on that
-  working tree, so never pull, stash, reset or switch branches there.
+  [docs/issues-for-edge-core-ir.md](docs/issues-for-edge-core-ir.md), which holds only
+  questions about the language: what the page needs is built here, around the
+  evaluator ([docs/evaluator-needs.md](docs/evaluator-needs.md)), and questions about
+  one tutorial go in `docs/tutorial-notes/<alg>.md`. Exception:
+  issues 2, 7, 8, 9 and 10 are fixed on her repo's branch
+  `fixes_for_edge_workbench` (with the max-flow E06/E17 fixes). On 2026-11-19
+  everything the workbench needed only for itself was taken back out of that
+  branch and built here: populate-round recording (`driver/run.py`), macro
+  expansion (`edge_workbench/macro.py`), `select-any`/`floor`
+  (`edge_workbench/operators.py`); the exact-cover example was removed. Toluwa has not
+  reviewed them, so their semantics are ours, not yet the reference's; they go
+  upstream as one pull request per issue (DESIGN.md, 39). Every example needs
+  that branch: never pull, stash, reset or switch branches in the checkout.
+  Issue 1 (occupancy inside an Einsum) is NOT allowed (Toluwa, 2026-11-19):
+  occupancy only in `⋄`; the patch is removed and `check` reports one.
 - **Her evaluator is the only evaluator.** The page replays its trace; nothing
   in this repo evaluates Einsums, in Python or JS.
 - **Fixes go in the tool, not in one page.** Every fix should help future algorithms.
@@ -103,9 +112,9 @@ There is no CI.
 - **Picture from the `ranks:` block** in the tutorial's front matter (closed vocabulary:
   `generational`, `vertex`, `set`/`element`, `position`, `spatial`); without it, inferred.
   `I` stays the generational rank (undecided for SpMV).
-- **Delegate the hardest, highest-priority work to Fable subagents**
-  (`model: "fable"`), with a self-contained brief; review their report and
-  check their claims before relaying.
+- **Hard work in-session, or an Opus subagent** (Fable is no longer available,
+  2026-11-19), with a self-contained brief; review a subagent's report and
+  check its claims before relaying.
 - **The page is for a newcomer.** Every string on it is written for a reader
   who has not seen EDGE, in the paper's terms: "generation", never
   "iteration"; "round" only for a Populate. Evaluator vocabulary belongs in

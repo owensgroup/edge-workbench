@@ -20,7 +20,8 @@
   through arms and inner cascades (`cascade_shape.flat_nodes`).
 - A macro is a lexical substitution (paper B.8). `einsum.edge` writes it as
   a `- Macro NAME(inputs) -> outputs` section in formal names; the IR holds
-  each call's expansion (`edge_ir.ir.macro.expand`). A labelled multi-output
+  each call's expansion (`edge_workbench.macro.expand`; expansion is the
+  front end's job, edge-core-ir's D3). A labelled multi-output
   case statement over macro calls is one conditional cascade, has no IR node
   and no entry in `labels` (it is in cascade.json's `conditionals`), and the
   driver emits a step for it saying which macro the generation ran. The
@@ -34,10 +35,11 @@
   the order the schedule hands them out, each on the one fiber the element
   belongs to. The evaluator checks `W ∩ (dom(S) ∪ D) = ∅` against the
   pre-state before applying the deletes and then the writes, and raises on a
-  violation. `evaluate_einsum(record_populate=True)` records every round
-  (issue 11); the driver passes it through as `step["populate"]` and the page
+  violation. The driver records every round by watching the coordinate
+  operator it hands the evaluator (`driver/run.py`, `_watching_populate`;
+  edge-core-ir is not changed for it), passes it through as `step["populate"]`, and the page
   only looks rounds up (`display.js`: `fiberStateAt`, `candidateFate`).
-- `select-any` writes the first arrival into an empty fiber and returns None
+- `select-any` (the workbench's, `edge_workbench/operators.py`) writes the first arrival into an empty fiber and returns None
   for every later one: the schedule decides, never the operator.
   `select-{min,max}-val` deletes the held coordinate and writes the incoming
   one when it ranks better, ties by coordinate (issue 4), so its result does

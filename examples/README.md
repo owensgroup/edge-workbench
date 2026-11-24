@@ -90,7 +90,7 @@ Be aware of what is and is not the published material:
   smaller than `|V| / 18`.
 - `TMU_i / α` and `|V| / β` are written with no action, so they run with the
   paper's default pass-through merge (§7.3.4); see
-  `docs/issues-for-edge-core-ir.md`, "For the DO-BFS tutorial".
+  `docs/tutorial-notes/direction-optimizing-bfs.md`.
 - Verifier: Floyd-Warshall (`different-algorithm`), depths on unit edges,
   compared as depths rather than parents. It is the one approved for the
   top-down cascade, unchanged: the hybrid ends with the same `Tree`, and the

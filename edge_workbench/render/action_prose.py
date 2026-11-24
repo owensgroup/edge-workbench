@@ -216,12 +216,6 @@ class Describer:
         if kind == "unary":
             return (UNARY_SYMBOL.get(_name(node["op"]), "")
                     + self.operand(node["operand"]))
-        if kind == "occupancy":
-            proj = node["operand"]
-            sub = self._at(proj)
-            name = self.tensor(proj["tensor"])
-            return (f"the number of entries in {name} at {sub}" if sub
-                    else f"the number of entries in {name}")
         if kind == "rank_value":
             return _rank(node["expr"])
         if kind == "anonymous":

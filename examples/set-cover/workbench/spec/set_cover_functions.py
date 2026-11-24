@@ -42,7 +42,8 @@ The reverse order hits a circular import.
 from __future__ import annotations
 
 import edge_ir.evaluator  # noqa: F401  (must precede edge_ir.udf)
-from edge_ir.udf import FunctionRegistry, UdfCategory, default_registry
+from edge_ir.udf import FunctionRegistry, UdfCategory
+from edge_workbench.operators import base_registry
 
 TAKE_LEFT_IF_LESS = "take_left_if_less"
 
@@ -82,7 +83,7 @@ def floor_left(left, right):
 def set_cover_registry() -> FunctionRegistry:
     """The default registry plus E04's filtered take_left, and E02's floor as
     the compute operator of a degenerate Map."""
-    registry = default_registry()
+    registry = base_registry()
     registry.register_python(
         "floor",
         UdfCategory.MAP_COMPUTE,
